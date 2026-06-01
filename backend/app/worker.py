@@ -15,6 +15,8 @@ from app.config import settings
 from app.model import SentimentModel
 from app.drift import DriftDetector
 from app.database import ClickHouseDatabase
+from app.trading.simulated_engine import SimulatedExecutionEngine
+from app.trading.alpaca_engine import AlpacaExecutionEngine
 
 structlog.configure(
     processors=[
@@ -30,6 +32,7 @@ class ConsumerWorker:
         self.redis_client: Optional[aioredis.Redis] = None
         self.model: Optional[SentimentModel] = None
         self.db: Optional[ClickHouseDatabase] = None
+        self.trading_engine = None
         # Registry of drift detectors isolated by ticker to prevent contamination
         self.drift_detectors: Dict[str, DriftDetector] = {}
         self.is_running = True
@@ -48,7 +51,15 @@ class ConsumerWorker:
         # 3. Load ONNX Model Singleton
         self.model = SentimentModel()
         
-        # 4. Ensure Redis Consumer Group exists
+        # 4. Initialize Hexagonal Trading Adapter based on config
+        engine_type = os.environ.get("TRADING_ENGINE", "simulated").lower()
+        if engine_type == "alpaca":
+            self.trading_engine = AlpacaExecutionEngine()
+        else:
+            self.trading_engine = SimulatedExecutionEngine()
+        await self.trading_engine.initialize()
+        
+        # 5. Ensure Redis Consumer Group exists
         await self.setup_consumer_group()
 
     async def setup_consumer_group(self):
@@ -185,6 +196,23 @@ class ConsumerWorker:
                     direction=drift_signal.direction
                 )
 
+            # D. Execute Paper Trade Order if sentiment confidence is high
+            # (Buy on positive sentiment > 75%, Sell on negative sentiment > 75%)
+            if inference["label"] in ("positive", "negative") and inference["confidence"] > 0.75:
+                trade_side = "buy" if inference["label"] == "positive" else "sell"
+                # Simulating a default pricing track (SPY=$500, AAPL=$175, standard default=$150)
+                mock_prices = {"SPY": 500.0, "AAPL": 175.0, "TSLA": 180.0, "NVDA": 900.0}
+                price = mock_prices.get(ticker, 150.0)
+                
+                await self.trading_engine.execute_order(
+                    ticker=ticker,
+                    action=trade_side,
+                    quantity=10,  # Transact 10 shares
+                    price_at_signal=price,
+                    signal_source_id=headline_id,
+                    confidence_score=inference["confidence"]
+                )
+
             # 5. Broadcast real-time event to FastAPI clients via Redis Pub/Sub
             event_payload = {
                 "type": "sentiment",
@@ -260,6 +288,8 @@ class ConsumerWorker:
         """Gracefully shuts down database and broker connection clients."""
         logger.info("Gracefully closing Consumer Worker...")
         self.is_running = False
+        if self.trading_engine and hasattr(self.trading_engine, "close"):
+            await self.trading_engine.close()
         if self.redis_client:
             await self.redis_client.close()
         if self.db:
