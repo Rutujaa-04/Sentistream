@@ -1,0 +1,914 @@
+SENTISTREAM
+Real-Time Sentiment Analytics & Quantitative Paper Trading Engine
+
+────────────────────────
+
+PRODUCT REQUIREMENTS DOCUMENT
+
+Version
+v1.0 – Initial Release
+Date
+June 2025
+Status
+Draft for Review
+Author
+Rutuja  |  Senior Engineer & PM
+Project Type
+Open-Source Portfolio / Showcase Project
+GitHub
+github.com/rutuja/sentistream
+
+DISCLAIMER: SentiStream is a portfolio and research project. It does not constitute financial advice. All trading signals are simulated. No real capital is placed at risk.
+
+Table of Contents
+
+
+1. Executive Summary
+1.1 Product Overview
+SentiStream is a production-grade, open-source MLOps pipeline that ingests live financial news headlines, applies FinBERT-based NLP sentiment classification, detects statistical model drift, and powers a quantitative paper trading engine — all exposed through a real-time observability dashboard. Built with FastAPI, Redis Streams, ClickHouse, ONNX Runtime, and React, SentiStream represents the full surface area of a modern AI-infused data platform.
+
+Interview Soundbite: "SentiStream is not just a sentiment classifier — it is a full-stack MLOps system demonstrating my ability to design, build, and operate AI pipelines at production scale, from data ingestion through model inference, drift detection, and real-time visualization."
+1.2 Vision Statement
+"To be the most technically complete, interview-ready, open-source reference implementation of a real-time financial NLP and MLOps pipeline — demonstrating the full stack from raw data ingestion to quantitative signal generation."
+1.3 Problem Being Solved
+Engineers and data scientists entering the quant finance or MLOps space struggle to demonstrate end-to-end system design competence. Toy projects show one component; SentiStream shows all of them working together:
+Most ML portfolios show model training in isolation — not deployment, monitoring, or inference serving.
+Financial data engineering portfolios rarely couple streaming pipelines with real-time NLP and drift detection.
+Interviewers increasingly test system design knowledge of event streaming, latency trade-offs, and observability. SentiStream provides concrete, story-able examples for each.
+1.4 Expected Impact
+Stakeholder
+Expected Impact
+Recruiters / Interviewers
+Immediately signals senior-level breadth: streaming, ML, quantitative reasoning, and frontend observability in one cohesive project.
+Engineering Hiring Managers
+Demonstrates real system design thinking: Redis consumer groups, ONNX quantization, Z-score drift alerts, DLQ handling.
+Open-Source Community
+Reference architecture for FinBERT + Redis + ClickHouse integration, reusable by other portfolio builders.
+Author (Rutuja)
+Elevates resume from "built a model" to "architected and shipped a production-grade MLOps platform."
+2. Background & Context
+2.1 Industry Landscape
+Quantitative sentiment analysis applied to financial markets is a mature institutional practice. Hedge funds and proprietary trading desks (Two Sigma, Citadel, Renaissance Technologies) have built internal NLP pipelines for over a decade. Retail and open-source equivalents, however, are fragmented: either academically-focused with no production plumbing, or SaaS-gated behind expensive APIs. The convergence of several trends makes a portfolio-grade implementation both possible and timely:
+Pre-trained financial language models (FinBERT, BloombergGPT) are now publicly available.
+Cloud-native streaming infrastructure (Redis Streams, Apache Kafka) has democratized event-driven architectures.
+ONNX Runtime enables CPU-viable, sub-10ms inference without GPU infrastructure.
+ClickHouse delivers OLAP query performance suitable for millisecond telemetry analytics on a laptop.
+2.2 Existing Solutions & Market Gaps
+Tool
+Strengths
+Weaknesses
+Gap SentiStream Fills
+Bloomberg Terminal
+Real-time, professional-grade
+$24k/yr, not open-source
+Open, reproducible, interview-demonstrable
+Refinitiv Eikon
+Comprehensive data feeds
+Enterprise-only pricing
+Free-tier Finnhub primary source
+FinBERT (standalone)
+SOTA financial NLP model
+No pipeline, no observability
+Full serving + drift detection layer
+Alpaca Paper Trading
+Real broker API simulation
+No NLP signal integration
+Sentiment-driven signal generation
+Grafana + Kafka Stack
+Production observability
+Finance-domain unaware
+Domain-specific latency + drift metrics
+2.3 Why SentiStream Should Exist
+SentiStream fills a white space: a fully-integrated, open-source reference system that a recruiter can clone, run, and immediately understand — and that an interviewer can use to probe a candidate's depth across streaming, ML serving, quantitative methods, and frontend visualization. No existing project does all four coherently.
+3. User Personas
+Since SentiStream is a portfolio showcase, "users" include those who evaluate the project (recruiters, engineers, hiring managers) and those who run it (the author, open-source contributors). Four distinct personas are defined:
+
+Persona 1: The Technical Interviewer
+Senior Staff Engineer or Engineering Manager at a Fintech / FAANG / Quant firm
+"I want to see if this candidate can design and operate a real distributed system, not just train a model."
+Goals
+Frustrations
+Success Criteria
+Evaluate system design depth in 45 minutes
+Assess trade-off reasoning (Redis vs Kafka, ONNX vs TorchServe)
+Find concrete evidence of production-level thinking
+Toy projects that show only model training
+No observability or monitoring components
+Candidates who cannot explain architectural decisions
+Can trace a headline from ingestion → inference → storage → dashboard in one conversation
+Candidate can articulate Z-score drift detection and why it matters
+Live demo works end-to-end without hand-waving
+
+Persona 2: The Recruiter / Screener
+Technical Recruiter at a quantitative hedge fund or fintech startup
+"I have 6 minutes to decide if this project is impressive enough to forward to the engineering team."
+Goals
+Frustrations
+Success Criteria
+Find projects with clear, real-world domain relevance
+Identify candidates who can communicate technical complexity simply
+Surface "signal" projects from a stack of GitHub links
+GitHub repos with no README or Loom demo
+Projects that do one thing (just a Jupyter notebook)
+Jargon-heavy descriptions with no visual proof
+README explains what it does in plain English in under 30 seconds
+Loom demo video runs without issues
+Architecture diagram clearly shows system components
+
+Persona 3: The Author / Developer (Rutuja)
+Full-Stack ML Engineer building and maintaining the project
+"I need this to be both technically impressive and genuinely shippable — not a hack."
+Goals
+Frustrations
+Success Criteria
+Build a system that demonstrates real production engineering
+Have concrete stories to tell in system design interviews
+Produce reusable, well-documented open-source components
+Time pressure: building alongside full-time work
+Risk of scope creep diluting interview narrative
+Balancing academic completeness with demo stability
+System runs end-to-end in a single docker-compose up
+Every architectural decision has a documented ADR
+Latency benchmarks are real and reproducible
+
+Persona 4: The Open-Source Contributor
+Data Engineer or ML practitioner wanting to learn from or extend the project
+"I want a real project I can clone, break, and learn from — not a toy example."
+Goals
+Frustrations
+Success Criteria
+Understand how FinBERT is served in production
+See how Redis consumer groups handle backpressure
+Learn ClickHouse schema design for time-series telemetry
+Projects with no tests or seed data
+Undocumented environment setup requirements
+No explanation of why architectural choices were made
+Can run the full stack with one command
+Can inject synthetic drift and see the alert fire
+ARCHITECTURE.md answers their "why" questions
+
+4. Problem Definition
+4.1 Core Pain Points
+For the Author (Developer)
+Existing portfolio projects are too narrow — they demonstrate model training but not deployment, serving, monitoring, or downstream consumption.
+System design interviews increasingly probe MLOps knowledge (model drift, latency trade-offs, consumer group semantics) that a typical ML project cannot substantiate.
+Quantitative finance roles require demonstrating domain fluency: understanding of what a sentiment Z-score alert means and how it translates to a trading signal.
+For the Interviewer Evaluating the Candidate
+Most portfolio ML projects are Jupyter notebooks — they demonstrate data science, not engineering.
+Without observability components, it is impossible to assess whether a candidate understands production reliability.
+No existing open-source project combines financial NLP + streaming architecture + quantitative signal generation in a way that can be demoed live.
+4.2 Current Workflow (Without SentiStream)
+A candidate preparing for quant-finance or MLOps roles today typically:
+Fine-tunes FinBERT on Financial PhraseBank in a Colab notebook — no serving layer.
+Builds a separate Kafka or Redis demo — disconnected from any real ML component.
+Creates a React dashboard — with static mock data, not live WebSocket feeds.
+Describes these as three separate projects, losing the narrative coherence of a unified system.
+4.3 Limitations of Existing Alternatives
+Open-source FinBERT repos: train-only, no ONNX, no drift detection, no API.
+Financial data pipelines (e.g., Apache Airflow + dbt): batch-oriented, no real-time NLP.
+Simulated trading platforms (Alpaca, QuantConnect): no NLP integration, black-box signal logic.
+Monitoring stacks (Prometheus + Grafana): generic, not finance-domain-aware.
+5. Product Goals
+5.1 Business Goals
+Position the author as a top-1% candidate for senior ML Engineer, Data Engineer, and Quant Engineering roles.
+Generate GitHub stars, forks, and community engagement that signal project quality to hiring signals.
+Produce a Loom video demo that can be embedded in job applications to replace take-home assessments.
+Create a project portfolio anchor that spawns multiple interview talking points across system design, ML, and quant reasoning.
+5.2 User Goals
+Interviewers: Quickly assess technical depth through a live, working demo with explainable architecture.
+Recruiters: In under 5 minutes, understand what the project does, why it matters, and who built it.
+Author: Have a system that is stable enough to demo live, documented enough to explain cold, and modular enough to extend during the interview if asked.
+Contributors: Clone → run → learn → contribute with zero friction.
+5.3 Technical Goals
+End-to-end latency: < 500ms from news headline ingestion to dashboard sentiment display.
+Inference latency: p99 < 50ms for INT8 quantized ONNX model on CPU.
+Throughput: handle 100 headlines/minute with no message loss (Redis consumer group + DLQ).
+Observability: p50/p95/p99 latency percentiles visible in real time on dashboard.
+Drift detection: Z-score alert fires within 2 standard deviations of baseline shift, configurable via config.py.
+Reliability: docker-compose up brings the full stack online in < 3 minutes on a commodity laptop.
+6. Success Metrics (KPIs)
+6.1 Portfolio & Acquisition Metrics
+Metric
+Target (3 Months)
+Measurement Method
+GitHub Stars
+≥ 200
+GitHub repository insights
+GitHub Forks
+≥ 50
+GitHub repository insights
+Loom Demo Views
+≥ 500
+Loom analytics dashboard
+LinkedIn Post Impressions
+≥ 5,000
+LinkedIn analytics
+Interview Referrals Attributable to Project
+≥ 3
+Self-reported in job tracker
+
+6.2 Technical Quality Metrics
+Metric
+Target
+Measurement Method
+Inference Latency (p99)
+< 50ms
+Observability.jsx percentile chart
+End-to-End Pipeline Latency
+< 500ms
+ClickHouse telemetry query
+FinBERT Fine-Tuned F1 Score
+≥ 0.88 (weighted)
+evaluate.py → benchmark.json
+Docker Cold Start to Working Demo
+< 3 minutes
+Timed on commodity laptop
+Message Loss Rate
+0% (DLQ capture)
+Redis consumer group lag monitoring
+Drift Alert Accuracy
+≥ 95% true positive rate on injected drift
+seed_test_data.py synthetic injection
+
+6.3 Engagement & Retention Metrics
+Metric
+Target
+Measurement Method
+Open Issues Resolved (P1)
+< 48 hours
+GitHub Issues tracker
+README Completion Rate
+Full setup in < 20 minutes
+Community feedback / issue reports
+Pull Requests Merged from Community
+≥ 5 in 3 months
+GitHub PR tracker
+Interview Mention Rate
+> 80% of interviews where project is listed
+Candidate self-tracking
+7. User Stories
+7.1 Core Pipeline & Ingestion
+As the author, I want news headlines to be ingested from Finnhub every 60 seconds, so that the dashboard always displays current financial sentiment.
+As the author, I want a fallback RSS ingestion path when Finnhub is rate-limited, so that the system demonstrates fault tolerance.
+As the author, I want headlines to be deduplicated before processing, so that the same news event does not generate duplicate sentiment scores.
+As the author, I want failed messages routed to a Dead Letter Queue (DLQ), so that I can demonstrate error handling in interviews.
+7.2 ML Inference & Model Management
+As a technical interviewer, I want to see the FinBERT model served via ONNX Runtime, so that I can assess the candidate's knowledge of model optimization and deployment trade-offs.
+As the author, I want the model to return positive, negative, and neutral labels with confidence scores, so that downstream signal logic has calibrated inputs.
+As the author, I want INT8 quantization profiling results documented in benchmark.json, so that I can cite concrete latency improvements in interviews.
+As a contributor, I want the model module to be fully decoupled from the ingestion and storage layers, so that I can swap in a different model without changing other components.
+7.3 Drift Detection
+As a technical interviewer, I want to see a statistical drift detection mechanism, so that I can assess the candidate's understanding of production ML monitoring.
+As the author, I want drift alerts to fire when the sentiment Z-score exceeds 2.0 standard deviations, so that the threshold has a clear statistical interpretation (95th percentile of a normal distribution).
+As the author, I want DRIFT_ALERT_Z_THRESHOLD to be configurable in config.py, so that I can demonstrate clean, parameterized system design.
+As the author, I want a synthetic drift injection script (seed_test_data.py), so that I can trigger and demo alerts live during an interview without waiting for natural drift.
+7.4 Real-Time Dashboard
+As a recruiter, I want a visually polished dashboard that explains itself without technical context, so that I can immediately understand what the project demonstrates.
+As the author, I want a live ticker showing real financial headlines with their sentiment labels, so that the demo is immediately viscerally compelling.
+As a technical interviewer, I want p50/p95/p99 latency charts displayed in real time, so that I can probe the candidate on what percentile latency means and why it matters.
+As the author, I want sentiment trends and Z-score drift alerts visualized in the Analytics component, so that the full pipeline story is visible on a single screen.
+7.5 Paper Trading Engine
+As the author, I want a simulated paper trading engine that generates buy/sell/hold signals from sentiment scores, so that I can demonstrate quantitative reasoning alongside NLP.
+As a technical interviewer (quant track), I want to see how sentiment signals are translated into position sizing logic, so that I can evaluate the candidate's understanding of alpha generation.
+As the author, I want a portfolio P&L view in the dashboard, so that the trading engine's performance is tangible and demonstrable.
+As the author, I want the trading engine to be modular with a clearly documented signal logic, so that I can explain and debate design decisions in an interview.
+7.6 Operations & DevOps
+As the author, I want a /ping health check endpoint that warms ClickHouse and Redis connections, so that the demo never fails due to cold starts.
+As a contributor, I want a single docker-compose up command to spin up the full stack, so that setup friction is eliminated.
+As the author, I want a DATA_SOURCES.md file crediting the Financial PhraseBank dataset, so that I demonstrate compliance and data governance awareness.
+8. Functional Requirements
+FR-001: News Ingestion Pipeline
+Description
+Continuous ingestion of live financial news headlines with primary (Finnhub) and fallback (RSS) sources.
+User Flow
+1. Scheduler triggers ingestor.py every 60s → 2. Calls Finnhub /news API → 3. Deduplicates by headline hash → 4. Publishes to Redis Stream → 5. On Finnhub failure, falls back to RSS feeds.
+Inputs
+Finnhub API key (env var), RSS feed URLs (config), polling interval (config).
+Outputs
+Deduplicated headline messages in Redis Stream with ticker symbol, headline text, source, and timestamp.
+Edge Cases
+Finnhub rate limit hit (60 req/min), RSS feed timeout, duplicate headline from multiple sources, malformed JSON response.
+Validation Rules
+Headline must have non-null text and timestamp. Ticker symbol must be non-empty string.
+Acceptance Criteria
+Headlines appear in Redis Stream within 5s of Finnhub response. DLQ captures malformed messages. RSS fallback activates within 10s of Finnhub failure.
+
+FR-002: ONNX Inference Engine
+Description
+Sub-50ms (p99) INT8-quantized FinBERT inference on CPU via ONNX Runtime.
+User Flow
+1. Worker consumes headline from Redis Stream → 2. Tokenizes text (max 512 tokens) → 3. Runs ONNX InferenceSession → 4. Returns {label, confidence, latency_ms}.
+Inputs
+Raw headline string (str, max 512 chars).
+Outputs
+JSON: {label: "positive"|"negative"|"neutral", confidence: float [0,1], latency_ms: float}.
+Edge Cases
+Text > 512 tokens (truncate with warning), non-English text (flag as undefined), ONNX session load failure on startup.
+Validation Rules
+Confidence must sum to 1.0 across all three classes. Latency must be recorded regardless of outcome.
+Acceptance Criteria
+p99 inference latency < 50ms measured over 1,000 consecutive inferences. F1 ≥ 0.88 on held-out Financial PhraseBank test set.
+
+FR-003: Z-Score Drift Detection
+Description
+Statistical drift detection on rolling sentiment distribution using configurable Z-score threshold.
+User Flow
+1. After each inference, drift.py updates rolling mean and std → 2. Computes Z-score of current sentiment → 3. If |Z| > DRIFT_ALERT_Z_THRESHOLD, publishes alert to ClickHouse drift_alerts table → 4. Dashboard displays alert in Analytics.jsx.
+Inputs
+Sentiment score sequence (floats), window size (config, default 100), threshold (config, default 2.0).
+Outputs
+DriftAlert record: {ticker, z_score, timestamp, direction, triggered_threshold}.
+Edge Cases
+Insufficient history (< window_size samples): suppress alerts. All-neutral sentiment baseline: alerts may be hyper-sensitive (document this behavior).
+Validation Rules
+Z-score must be a finite float. Window must have minimum 30 samples before alerting.
+Acceptance Criteria
+seed_test_data.py synthetic drift injection triggers alert within 5 seconds. No false positives on stable baseline over 1,000-sample run.
+
+FR-004: Real-Time WebSocket Dashboard
+Description
+React dashboard with three components: LiveTicker, Observability (latency percentiles), and Analytics (trends + drift).
+User Flow
+1. User opens browser → 2. React app connects to FastAPI WebSocket → 3. New sentiment events streamed in real time → 4. LiveTicker scrolls headlines → 5. Charts update without page refresh.
+Inputs
+WebSocket stream from FastAPI /ws endpoint.
+Outputs
+Live sentiment labels, scrolling ticker, p50/p95/p99 latency charts, Z-score timeline, drift alert badges.
+Edge Cases
+WebSocket disconnect (auto-reconnect with exponential backoff). No data for > 60s (show "Waiting for data..." state). Browser tab hidden (pause render, not data).
+Acceptance Criteria
+Dashboard loads in < 2s. New sentiments appear within 1s of inference completion. Latency charts reflect real p-values from ClickHouse.
+
+FR-005: Paper Trading Engine
+Description
+Quantitative signal engine that converts sentiment scores into simulated buy/sell/hold decisions with position sizing and P&L tracking.
+Signal Logic Options
+Option A (Simulated Only): Internal position tracking, no broker API. Option B (Read-Only): Alpaca paper account view. Option C (Full Execution): Alpaca API order submission.
+User Flow
+1. Sentiment score ingested → 2. Signal generator applies confidence threshold → 3. Position sizing applies Kelly Criterion or fixed-fraction → 4. Order logged to ClickHouse → 5. P&L updated in dashboard.
+Inputs
+Sentiment {label, confidence}, current position (from ClickHouse), available capital (config).
+Outputs
+Trade order: {ticker, action, quantity, price_at_signal, timestamp, rationale}.
+Edge Cases
+Duplicate signals within 60s (cooldown period), confidence below threshold (no trade), portfolio at max exposure.
+Acceptance Criteria
+Signal generation latency < 100ms. P&L calculation matches manual verification. All trades logged with full audit trail.
+
+FR-006: Health Check & Connection Warmup
+Description
+A /ping endpoint that actively warms ClickHouse and Redis connections to prevent cold-start failures during demos.
+User Flow
+Startup script calls GET /ping → FastAPI executes SELECT 1 on ClickHouse + redis.ping() → Returns {status: "ok", clickhouse: "warm", redis: "warm"}.
+Acceptance Criteria
+/ping responds within 2s. Subsequent pipeline operations show no cold-start latency spike.
+9. Non-Functional Requirements
+9.1 Performance
+Requirement
+Target
+Rationale
+Inference Latency p99
+< 50ms
+Competitive with production NLP serving benchmarks
+End-to-End Latency
+< 500ms
+Ensures dashboard feels "live" to demo observers
+Dashboard Load Time
+< 2s
+First impression quality for interviewers
+Pipeline Throughput
+≥ 100 headlines/min
+Exceeds Finnhub free tier limit of 60 req/min
+
+9.2 Scalability
+Horizontal: Redis consumer group design allows multiple worker.py instances with no code changes.
+Vertical: ClickHouse columnar storage handles billions of telemetry rows; no schema changes required to scale.
+Model: ONNX model is stateless; multiple inference workers can be spawned independently.
+Note for Portfolio Context: Single-node deployment is acceptable for demo purposes. Design must be documented as horizontally scalable.
+9.3 Security
+All secrets (Finnhub API key, Redis password, ClickHouse credentials) stored in .env, never committed to Git.
+.env.example provides template without real values.
+No user authentication required (portfolio project, no sensitive user data).
+Docker containers run as non-root users.
+CORS restricted to localhost:5173 (Vite dev server) in development mode.
+9.4 Reliability
+Dead Letter Queue (DLQ): All failed message processing events routed to Redis DLQ stream for manual inspection.
+Connection warmup: /ping endpoint prevents cold-start failures.
+Finnhub → RSS failover: Automatic fallback prevents demo-breaking outages.
+Graceful shutdown: Worker processes flush in-flight messages before exit.
+9.5 Accessibility
+Dashboard color scheme passes WCAG 2.1 AA contrast ratios.
+Sentiment labels are text-based (not color-only) for color-blind users.
+Dashboard is keyboard-navigable for basic controls.
+9.6 Compliance & Attribution
+DATA_SOURCES.md credits Malo et al. (2014) Financial PhraseBank dataset with DOI and license terms.
+All third-party libraries listed in requirements.txt and package.json with version pins.
+LICENSE file in repository root (MIT recommended for open-source portfolio).
+Clear disclaimer that no real financial advice is offered.
+9.7 Monitoring & Observability
+ClickHouse stores: inference_latency_ms, sentiment_label, confidence_score, ticker, timestamp for every processed headline.
+Dashboard queries ClickHouse for real p50/p95/p99 values — no mocked metrics.
+Drift alerts stored with full context: z_score, window_mean, window_std, triggered_threshold.
+Redis consumer group lag monitored via XPENDING and exposed in /health endpoint.
+10. Feature Prioritization (MoSCoW)
+Prioritization is driven by interview impact, demo stability, and technical storytelling value — not by user volume or revenue.
+
+Feature
+Priority
+Dev Effort
+Reasoning
+Finnhub news ingestion + Redis producer
+Must Have
+Medium
+Foundational — all downstream components depend on this.
+FinBERT ONNX inference engine
+Must Have
+High
+Core differentiator — demonstrates ML serving knowledge.
+ClickHouse schema + telemetry inserts
+Must Have
+Medium
+Required for real latency metrics and interview credibility.
+Redis consumer group worker
+Must Have
+Medium
+Demonstrates event streaming expertise (vs. naive polling).
+Dead Letter Queue (DLQ)
+Must Have
+Low
+High interview signal — shows production error-handling thinking.
+Z-score drift detection
+Must Have
+Medium
+Key interview differentiator — statistical ML monitoring.
+/ping warmup endpoint
+Must Have
+Low
+Demo stability insurance — prevents cold-start embarrassment.
+React dashboard (LiveTicker + Observability + Analytics)
+Must Have
+High
+Visual proof of concept — required for recruiter and interviewer impact.
+docker-compose single-command setup
+Must Have
+Low
+Contributor and interviewer experience — zero friction cloning.
+README + ARCHITECTURE.md + DATA_SOURCES.md
+Must Have
+Medium
+Documentation signals professionalism and PM-level thinking.
+RSS fallback ingestion
+Should Have
+Low
+Demonstrates fault tolerance; easy to implement given Finnhub primary.
+Seed data / synthetic drift injection script
+Should Have
+Low
+Critical for live demo reliability — inject drift on command.
+Paper trading engine (Option A: simulated only)
+Should Have
+High
+Strong quant differentiator, but complex — simulated mode is interview-safe.
+benchmark.json with F1 vs latency data
+Should Have
+Low
+Provides concrete numbers to cite in interviews.
+Confusion matrix visualization
+Should Have
+Low
+Shows ML evaluation maturity.
+Per-class F1 evaluation script
+Should Have
+Medium
+Demonstrates understanding of class imbalance in financial NLP.
+Alpaca read-only brokerage integration (Option B)
+Could Have
+Medium
+Impressive but introduces external dependency risk for demo.
+SEC filing ingestion via EDGAR API
+Could Have
+High
+High-value but scope risk — deprioritize for MVP.
+Portfolio P&L historical chart
+Could Have
+Medium
+Compelling visual but requires stable trading engine first.
+Alerting via email/Slack on drift events
+Could Have
+Low
+Nice-to-have observability feature for Phase 2.
+Alpaca full execution (Option C)
+Won't Have (v1)
+High
+Real money risk; out of scope for portfolio project.
+Multi-user authentication
+Won't Have (v1)
+High
+Not required for single-user demo; adds complexity with no portfolio value.
+Production cloud deployment (AWS/GCP)
+Won't Have (v1)
+High
+docker-compose is sufficient for portfolio demos.
+Bloomberg / Refinitiv data integration
+Won't Have (v1)
+High
+Enterprise licensing incompatible with open-source project.
+11. User Flows
+11.1 Local Setup & Onboarding Flow
+Step 1: Clone repository — git clone github.com/rutuja/sentistream
+Step 2: Copy .env.example → .env, add Finnhub API key.
+Step 3: Run docker-compose up — spins up Redis, ClickHouse, FastAPI backend.
+Step 4: Run npm install && npm run dev in /frontend — Vite dev server starts on localhost:5173.
+Step 5: Startup script auto-calls GET /ping to warm connections.
+Step 6: Dashboard loads. LiveTicker shows first headlines within 60 seconds.
+Step 7 (Optional Demo): Run python scripts/seed_test_data.py to inject synthetic drift and trigger alert.
+11.2 Core Pipeline Flow (Per Headline)
+T+0s: Ingestor polls Finnhub API for /news?category=general.
+T+0.1s: Headline deduplication check (SHA-256 hash against Redis SET).
+T+0.2s: Headline published to Redis Stream as JSON message.
+T+0.3s: Worker consumer group reads message from stream.
+T+0.5s: ONNX InferenceSession runs FinBERT on headline text.
+T+0.55s: Sentiment result {label, confidence, latency_ms} returned.
+T+0.6s: Result written to ClickHouse (headlines table + telemetry table).
+T+0.65s: Drift detection runs; alert written if threshold exceeded.
+T+0.7s: FastAPI WebSocket broadcasts event to all connected React clients.
+T+0.8s: Dashboard updates LiveTicker, Observability charts, Analytics panel.
+11.3 Error Handling Flow
+Finnhub API failure → ingestor.py catches exception → logs warning → activates RSS fallback → continues polling.
+ONNX inference failure → worker.py catches exception → routes message to DLQ stream → logs error with full message context → continues processing next message.
+ClickHouse connection failure → database.py raises exception → worker.py catches → retries 3x with exponential backoff → routes to DLQ if all retries fail.
+WebSocket client disconnect → FastAPI removes client from broadcast list → client-side auto-reconnects with exponential backoff.
+Redis connection failure → All services fail with clear error log → /health endpoint returns 503 → startup script alerts operator.
+11.4 Live Demo Flow (Interview Context)
+Interviewer present: Open browser to localhost:5173 — dashboard immediately visible.
+Explain LiveTicker: "This is pulling real headlines from Finnhub and classifying each one with a fine-tuned FinBERT model served via ONNX Runtime."
+Explain Observability panel: "These p50/p95/p99 latency values are real — queried live from ClickHouse, not mocked."
+Trigger drift: python scripts/seed_test_data.py --mode=drift → alert fires in Analytics panel within 5 seconds.
+Explain alert: "This Z-score alert fired because the rolling sentiment distribution shifted beyond 2 standard deviations — that's the 95th percentile of a normal distribution."
+12. UX Requirements
+12.1 Information Architecture
+Primary layout: Three-panel single-page dashboard — no routing required for MVP.
+Panel 1 (LiveTicker.jsx): Full-width scrolling headline ticker with sentiment badges.
+Panel 2 (Observability.jsx): Latency percentile line chart + throughput counter + consumer lag indicator.
+Panel 3 (Analytics.jsx): Sentiment distribution over time + Z-score timeline + drift alert log.
+12.2 Design Principles
+Terminal aesthetic with professional finish: dark background, monospace accents for technical data, sans-serif for narrative text.
+Data density over decoration: every visual element must carry information — no decorative charts.
+Self-explanatory layout: a recruiter with no technical context should understand "good news = green, bad news = red" within 10 seconds.
+Live feel: subtle animations on new headline arrival; pulsing indicator when pipeline is active.
+12.3 Empty States
+LiveTicker: "Connecting to pipeline... waiting for headlines." with animated spinner.
+Observability: "No latency data yet — pipeline warming up." — displayed until 10 samples collected.
+Analytics: "Drift monitoring active — watching for sentiment shifts." — shown before threshold window is filled.
+12.4 Loading States
+Dashboard skeleton screens on initial load — prevents layout shift.
+WebSocket reconnection: "Reconnecting..." banner — does not block the rest of the dashboard.
+12.5 Error States
+WebSocket error: "Pipeline disconnected. Retrying in Ns..." with countdown.
+No data for > 5 minutes: "No new headlines detected. Check Finnhub API key and rate limits." with link to docs.
+12.6 Mobile Responsiveness
+Mobile is a secondary concern for a portfolio dashboard primarily demoed on a laptop. Responsive breakpoints should be implemented for tablet (768px) but pixel-perfect mobile is a Phase 2 requirement.
+13. Technical Architecture
+13.1 Architecture Overview
+Architecture Decision Record: SentiStream is designed as a decoupled, event-driven pipeline where each component (ingestor, worker, inference, drift, API, database) is independently replaceable. This is intentional — it makes the architecture story richer and more interview-defensible than a monolithic approach.
+
+Layer
+Technology
+Architectural Rationale
+Frontend
+React 18 + Vite + Recharts + WebSocket API
+Vite hot reload accelerates development; WebSocket provides true push semantics without polling.
+API Layer
+FastAPI (Python 3.11) + uvicorn
+Native async/await for concurrent WebSocket + REST handling; automatic OpenAPI docs for interviewer review.
+Message Broker
+Redis Streams (Upstash-compatible)
+Consumer groups provide at-least-once delivery and parallelism without Kafka's operational overhead.
+ML Inference
+ONNX Runtime + FinBERT (fine-tuned) + INT8 quantization
+ONNX decouples training framework from runtime; INT8 quantization achieves 3-4x speedup on CPU.
+Analytics DB
+ClickHouse (Docker / ClickHouse Cloud)
+Columnar OLAP engine built for time-series aggregations — p99 latency queries run in < 5ms.
+ML Training
+PyTorch + HuggingFace Transformers + Financial PhraseBank
+FinBERT pre-trained on financial text; fine-tuning on PhraseBank provides domain-specific accuracy gains.
+Data Ingestion
+Finnhub REST API (primary) + RSS (fallback)
+Finnhub free tier is reliable; RSS fallback demonstrates resilience engineering.
+Containerization
+Docker + docker-compose
+Single-command reproducibility is non-negotiable for portfolio credibility.
+
+13.2 Key Architectural Decisions & Trade-offs
+Redis Streams vs. Apache Kafka
+Redis Streams was chosen over Kafka for this portfolio context. Kafka would be architecturally superior for true production scale (partitions, replication, retention policies) but adds significant operational complexity (Zookeeper/KRaft, broker configuration) with no portfolio benefit for a single-node demo. The consumer group semantics are functionally identical for demonstrating the core concept. This trade-off is documented in ARCHITECTURE.md and is a rich interview discussion point.
+
+ONNX Runtime vs. TorchServe vs. Triton Inference Server
+ONNX Runtime was selected for CPU-only inference. TorchServe and Triton Inference Server are production-grade choices but require GPU infrastructure to realize their value. ONNX Runtime's Python API is sufficient for demonstrating the inference serving concept on a laptop, and INT8 quantization provides a concrete optimization story with measurable latency benchmarks.
+
+ClickHouse vs. PostgreSQL + TimescaleDB
+ClickHouse delivers sub-millisecond aggregation on time-series telemetry data at scale. PostgreSQL with TimescaleDB would be more conventional but would require query optimization that ClickHouse handles natively. The interview story for choosing ClickHouse ("I needed OLAP-native latency percentile queries without query tuning") is cleaner and signals broader database knowledge.
+13.3 Component Dependency Graph
+Ingestor → Redis Stream → Worker → [ONNX Model | Drift Detector] → ClickHouse → FastAPI WebSocket → React Dashboard. All dependencies flow left-to-right. No circular dependencies. Each component can be tested in isolation.
+14. Data Model
+14.1 ClickHouse Tables
+Table: headlines
+Column
+Type
+Description
+id
+UUID
+Unique identifier (SHA-256 hash of headline + ticker)
+ticker
+String
+Stock ticker symbol (e.g., AAPL, TSLA)
+headline_text
+String
+Raw news headline text (max 512 chars)
+source
+String
+Data source identifier (finnhub | rss_fallback)
+sentiment_label
+Enum(String)
+positive | negative | neutral
+confidence_score
+Float64
+Model confidence [0.0, 1.0]
+ingested_at
+DateTime64(3)
+UTC timestamp of Finnhub ingestion
+processed_at
+DateTime64(3)
+UTC timestamp of ONNX inference completion
+
+Table: inference_telemetry
+Column
+Type
+Description
+headline_id
+UUID
+Foreign key to headlines.id
+inference_latency_ms
+Float64
+ONNX session run duration in milliseconds
+tokenization_latency_ms
+Float64
+HuggingFace tokenizer duration
+total_latency_ms
+Float64
+End-to-end worker processing time
+worker_id
+String
+Consumer group worker identifier
+recorded_at
+DateTime64(3)
+Telemetry record timestamp
+
+Table: drift_alerts
+Column
+Type
+Description
+alert_id
+UUID
+Unique drift alert identifier
+ticker
+String
+Affected ticker symbol
+z_score
+Float64
+Computed Z-score at alert time
+window_mean
+Float64
+Rolling mean over configured window
+window_std
+Float64
+Rolling std deviation over configured window
+direction
+Enum(String)
+bullish_spike | bearish_spike
+triggered_threshold
+Float64
+DRIFT_ALERT_Z_THRESHOLD value at time of alert
+alerted_at
+DateTime64(3)
+UTC timestamp of alert generation
+
+Table: paper_trades (Phase 2 / Trading Engine)
+Column
+Type
+Description
+trade_id
+UUID
+Unique trade identifier
+ticker
+String
+Traded ticker symbol
+action
+Enum(String)
+buy | sell | hold
+quantity
+Int32
+Number of simulated shares
+price_at_signal
+Float64
+Mock price at signal generation time
+signal_source
+UUID
+headline_id that triggered this trade
+confidence_score
+Float64
+FinBERT confidence that triggered signal
+executed_at
+DateTime64(3)
+Simulated execution timestamp
+15. Risks & Challenges
+Risk
+Impact
+Likelihood
+Mitigation
+Finnhub rate limit hit during demo
+High
+Medium
+RSS fallback auto-activates; /ping warms connections; seed_test_data.py can inject pre-captured headlines offline.
+ONNX model fails to load on cold start
+High
+Low
+Model loaded at startup, not per-request; /ping validates model readiness; startup script blocks until /ping returns 200.
+ClickHouse Cloud latency on free tier
+Medium
+Medium
+/ping warms connection; local Docker ClickHouse is primary for demos; Cloud is optional for production context.
+FinBERT fine-tuning fails to reach F1 ≥ 0.88
+Medium
+Low
+Financial PhraseBank is a well-studied dataset; pre-trained FinBERT achieves ~0.87 without fine-tuning. Acceptable fallback.
+Redis consumer group message duplication
+Low
+Low
+Idempotency via headline hash deduplication before Redis publish; ClickHouse primary key prevents duplicate inserts.
+Scope creep from SEC filing / trading engine ambition
+High
+High
+Strict MoSCoW prioritization; SEC filing and Option C (live execution) explicitly marked Won't Have for v1.
+Demo fails live during interview (Murphy's Law)
+High
+Medium
+Loom recording as backstop; seed_test_data.py for offline demo; docker-compose tested on fresh machine before each interview.
+Dashboard perceived as "just a pretty chart"
+Medium
+Medium
+ARCHITECTURE.md and README explicitly connect every visual element to its technical backing; interviewer briefing guide included.
+Low GitHub visibility in crowded ML portfolio space
+Medium
+Medium
+LinkedIn launch post + Hacker News Show HN; clear README positioning; Loom demo link prominent in repo header.
+Contributors break demo stability
+Low
+Low
+CONTRIBUTING.md with test requirements; CI/CD GitHub Actions to run smoke tests on PRs.
+16. MVP Definition
+16.1 What Is Included in MVP
+The MVP goal: a recruiter can clone, run docker-compose up, open localhost:5173, and see live sentiment analysis happening in under 5 minutes. A technical interviewer can then ask any system design question and receive a documented, defensible answer.
+
+Finnhub news ingestion with RSS fallback and deduplication.
+FinBERT ONNX inference engine with INT8 quantization profiling and benchmark.json.
+Redis Streams consumer group with Dead Letter Queue.
+Z-score drift detection with configurable threshold.
+ClickHouse telemetry storage (headlines + inference_telemetry + drift_alerts).
+FastAPI with /ping warmup, /health, and WebSocket broadcast.
+React dashboard: LiveTicker + Observability (p50/p95/p99) + Analytics (drift alerts).
+docker-compose.yml for single-command local setup.
+seed_test_data.py synthetic drift injection script.
+README.md + ARCHITECTURE.md + DATA_SOURCES.md documentation.
+Loom video demo (≤ 5 minutes walkthrough).
+16.2 What Is Excluded from MVP
+Paper trading engine (Option A, B, or C) — complex, independent feature; does not affect pipeline story.
+SEC filing / EDGAR API ingestion — high complexity, separate domain; Phase 2.
+Alpaca brokerage integration (Options B & C) — introduces external dependency risk; Phase 2.
+Multi-user auth / session management — no user data, unnecessary complexity.
+Production cloud deployment — local docker-compose is interview-sufficient.
+Email/Slack alerting on drift events — nice-to-have monitoring feature; Phase 2.
+Mobile-optimized dashboard — laptop/desktop demo context only for MVP.
+16.3 MVP Success Definition
+The MVP is complete when: (1) the full pipeline runs end-to-end in a single terminal session, (2) the dashboard displays live sentiment with real latency metrics within 5 minutes of clone, and (3) a synthetic drift injection triggers a visible alert within 10 seconds. These three criteria are verifiable by any technical interviewer in real time.
+17. Future Roadmap
+Phase
+Timeline
+Features & Goals
+Phase 1
+MVP
+Months 1–2
+Core pipeline (ingestion + ONNX inference + ClickHouse + Redis consumer group)
+Real-time React dashboard with live WebSocket feed
+Z-score drift detection + synthetic drift injection
+Full documentation suite + Loom demo video
+Phase 2
+Trading
+Months 3–4
+Paper trading engine (Option A: simulated P&L tracking)
+Portfolio P&L historical chart in dashboard
+Alpaca read-only integration (Option B) if scope permits
+Slack/email alerting on drift events
+SEC filing ingestion via EDGAR API (early exploration)
+Phase 3
+Platform
+Months 5–6
+Full SEC EDGAR filing ingestion + sentiment comparison (news vs. filings)
+Model registry with versioned ONNX artifacts and A/B testing framework
+Prometheus + Grafana integration for production-grade observability
+CI/CD pipeline (GitHub Actions) with automated benchmark regression tests
+Optional: cloud deployment guide (AWS ECS or Railway)
+18. Competitive Analysis
+18.1 Portfolio Project Landscape
+Evaluated against comparable open-source ML / fintech portfolio projects on GitHub and Kaggle:
+
+Project
+ML Serving
+Streaming
+Quant Signal
+SentiStream Advantage
+finBERT-notebooks (typical)
+No (Jupyter only)
+No
+No
+SentiStream: full serving + pipeline
+Kafka stock-ticker demos
+No
+Yes (Kafka)
+No
+SentiStream adds NLP + drift detection
+QuantConnect open algos
+No
+No
+Yes
+SentiStream adds NLP signal origin story
+MLflow + FastAPI demos
+Yes (MLflow)
+No
+No
+SentiStream adds streaming + finance domain
+Grafana + Prometheus demos
+No
+Partial
+No
+SentiStream: domain-specific ML observability
+SentiStream (this project)
+Yes — ONNX + quantization
+Yes — Redis Streams
+Yes — sentiment signal
+Only project combining all four layers
+
+18.2 Differentiation Summary
+Unique positioning: SentiStream is the only open-source portfolio project that integrates real-time financial NLP, event streaming with consumer groups, Z-score drift detection, and a quantitative signal engine into a single, runnable system.
+Narrative depth: Each architectural decision has a documented trade-off rationale, enabling confident interview storytelling at multiple levels of abstraction (L3 engineer → Staff Engineer → Director).
+Demo reliability: Connection warmup, RSS fallback, and synthetic drift injection mean the demo works even when external dependencies misbehave — a production engineering mindset made visible.
+19. Open Questions
+19.1 Requiring Author Decision
+Open Question
+Options & Recommendation
+Paper trading engine depth for v1?
+Option A (simulated only) is recommended for MVP stability. Options B/C are Phase 2. Decision needed before sprint planning.
+ClickHouse Cloud vs. Docker-only?
+Docker-only is recommended for MVP (no cold starts, no billing). ClickHouse Cloud can be documented as "production upgrade path."
+License choice for open-source repo?
+MIT recommended — maximally permissive, signals contributor-friendly intent. Apache 2.0 if patent protection desired.
+Should dashboard be publicly deployed (Railway / Render)?
+A live public URL would increase recruiter impressions. Risk: API key exposure. Mitigation: use demo-mode with pre-captured headline dataset.
+Loom video length and structure?
+Recommended: 4-5 min. Structure: 30s overview → 2min live demo → 1.5min architecture walkthrough → 30s drift demo.
+
+19.2 Requiring Stakeholder Input
+Should the SEC filing ingestion feature be positioned as a Phase 2 feature or kept entirely out of the project narrative to avoid scope perception?
+Is the "paper trading engine" naming accurate and appropriate for this project? Some interviewers may probe for live brokerage experience — should the naming be softened to "quantitative signal generator"?
+Should contributor guidelines be published from Day 1, or after the project is stable?
+20. Final Recommendations
+20.1 Product-Market Fit (for a Portfolio Project)
+The target "market" is technical interviewers and recruiters. The product-market fit is strong: SentiStream covers exactly the technical surface area that senior ML and data engineering interviews probe — streaming, model serving, observability, and quantitative reasoning — in a single coherent narrative.
+Critical success factor: The Loom video is as important as the code. Interviewers who cannot allocate 45 minutes to review a codebase will watch a 5-minute video. Invest proportionally.
+Resume positioning: List SentiStream as a standalone project, not under a job role. Use the tagline: "Production-grade MLOps pipeline: FinBERT sentiment classification, Redis Streams consumer groups, ONNX quantized inference (p99 < 50ms), Z-score drift detection, real-time ClickHouse observability."
+20.2 Technical Feasibility
+All chosen technologies are stable, well-documented, and free-tier accessible. No technology choice requires budget. The greatest implementation risk is scope creep — specifically the paper trading engine and SEC filing integration. These must be deferred to Phase 2 or the MVP will never ship.
+Implement components in this order: (1) Redis ingestion → (2) ONNX inference → (3) ClickHouse storage → (4) drift detection → (5) FastAPI + WebSocket → (6) React dashboard. This order minimizes integration risk.
+Spend 20% of effort on the ARCHITECTURE.md. Interviewers with no time to read code will read architecture documents.
+20.3 User Adoption (Recruiter & Interviewer Conversion)
+GitHub README must pass the "6-minute recruiter test": a non-technical recruiter must understand what SentiStream does, why it is impressive, and how to watch it in under 6 minutes. A/B test the README with non-technical friends before publishing.
+Add a "Why I Built This" section to the README that tells the personal story behind the project. Interviewers hire people, not projects.
+Submit to Hacker News "Show HN" on launch day. The community feedback will strengthen the project and generate organic GitHub visibility.
+20.4 Long-Term Scalability (of the Portfolio Narrative)
+SentiStream is designed to grow with the author's career. The modular architecture means adding a new component (SEC ingestion, live brokerage, Prometheus) is additive, not disruptive.
+As interview levels increase (L5 → L6 → Staff), the conversation can shift from "how does the system work" to "what would you change if you had to handle 10x volume" — and the answer is already documented: replace Redis with Kafka, replace ClickHouse Cloud free tier with a dedicated cluster, add Triton Inference Server with GPU.
+Version the project. Tag releases in GitHub. Being able to say "here is the v1 MVP, here is what I added in v2" signals product thinking, not just engineering execution.
+
+Final Note to Author: Ship the MVP first. A polished, running, demo-stable MVP beats a theoretically perfect but unshipped system every time. The most common portfolio mistake is over-engineering into irrelevance. SentiStream's first commit should run end-to-end within your first two weeks. Everything else is iterative improvement.
+Appendix: Interview Story Templates
+The following are prepared talking-point structures for common interview questions. These can be adapted and practiced verbatim.
+
+"Tell me about a complex system you designed."
+SentiStream is a real-time financial NLP pipeline I architected and built. It ingests live news headlines via Finnhub, classifies each one using a fine-tuned FinBERT model I serve with ONNX Runtime at under 50ms p99 latency, detects statistical drift via Z-score analysis, and streams results to a React dashboard backed by ClickHouse for sub-millisecond latency percentile queries. The key architectural decision I made was to use Redis Streams with consumer groups instead of Kafka — a deliberate trade-off that gives me the same at-least-once delivery semantics with dramatically lower operational overhead for this scale.
+
+"How would you handle model drift in production?"
+In SentiStream I implemented a Z-score based drift detector in drift.py. It maintains a rolling window of sentiment scores, computes the mean and standard deviation, and fires an alert when the current distribution shifts beyond 2.0 standard deviations — which corresponds to the 95th percentile of a normal distribution. The threshold is externalized to config.py as DRIFT_ALERT_Z_THRESHOLD so it can be tuned without a code deploy. I also built a seed_test_data.py script that synthetically injects drift so I can verify the alert pipeline without waiting for natural distribution shifts.
+
+"Why ONNX Runtime over TorchServe?"
+For this use case, ONNX Runtime was the right choice for three reasons: First, I am running on CPU only — ONNX Runtime is highly optimized for CPU inference and supports INT8 quantization, which gave me a 3-4x latency improvement over the base PyTorch model. Second, ONNX decouples the runtime from the training framework — if I switch from PyTorch to a JAX-based model in the future, the serving layer does not change. Third, TorchServe and Triton Inference Server are excellent tools, but they add operational complexity that is not justified without a GPU and multi-model serving requirements. I documented this decision in ARCHITECTURE.md precisely because I expected it to be a system design discussion point.

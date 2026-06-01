@@ -1,0 +1,706 @@
+Here is the completely parsed, highly readable document text version of the SentiStream Implementation Plan Document (IPD). This matches the exact structure, timelines, database constraints, task metrics, and checklist paths defined in your docx generator script.
+SENTISTREAM
+Real-Time Sentiment Analytics & Quantitative Paper Trading Engine
+IMPLEMENTATION PLAN DOCUMENT (IPD)
+v1.0 · June 2025 · Single-Developer Build
+Author: Rutuja · Senior Engineer & PM
+Product: SentiStream
+Document Type: Implementation Plan Document (IPD)
+Based on PRD: v1.0 – Draft for Review, June 2025
+Based on TRD: v1.0 – Engineering Draft, June 2025
+Build Duration: ~10 weeks (MVP in 6 weeks)
+Total Estimated Hours: 240–280 hrs (MVP: ~140 hrs)
+GitHub Repository: github.com/rutuja/sentistream
+1. Development Strategy
+1.1 Overall Implementation Approach
+SentiStream is built as a modular monolith using a bottom-up pipeline strategy: each layer is built, tested, and verified in isolation before the next layer depends on it. This approach eliminates integration surprises, keeps the system demo-stable at every checkpoint, and produces a clean git history with meaningful tagged milestones.
+Core philosophy: Every Friday should produce a system that runs end-to-end. Never leave Week N+1 unable to demo what Week N built.
+1.2 Build Order Rationale
+The pipeline has one direction of data flow: Ingestor → Redis → Worker → [Model + Drift] → ClickHouse → FastAPI → React. Building in this order means:
+ML training runs first because the ONNX model artifact is a hard dependency for the worker. Training takes compute time — start it early and let it run in the background.
+Infrastructure (Docker, Redis, ClickHouse) comes second because every subsequent component needs a running data store to verify against.
+The backend pipeline (ingestor → worker → database) is built before the API because the API only reads what the pipeline produces.
+The React dashboard is built last because it is a consumer of a completed backend — building it earlier would require mocking everything.
+1.3 Technical Milestones
+Milestone
+Week
+Verification Criteria
+M1: ONNX Model Ready
+End of W1
+python evaluate.py outputs F1 ≥ 0.88; finbert-int8.onnx exists; benchmark.json populated
+M2: Infrastructure Live
+End of W2
+docker-compose up; ClickHouse SELECT 1 returns 200; Redis PING returns PONG; /ping endpoint 200
+M3: Pipeline Complete
+End of W3
+Headlines flowing: Finnhub → Redis → Worker → ClickHouse rows visible
+M4: Observability Live
+End of W4
+Drift alert fires on seed_test_data.py injection; /health returns all green; /metrics returns Prometheus text
+M5: Dashboard Live
+End of W5
+localhost:5173 shows live sentiment ticker; p99 chart updates in real time; drift alert badge appears
+M6: MVP Shippable
+End of W6
+CI green on main; README complete; Loom demo recorded; full stack from cold start in < 3 min
+M7: Trading Engine
+End of W8
+Buy/sell signals logged in paper_trades; /api/v1/portfolio returns P&L; Portfolio.jsx renders
+M8: Production-Ready
+End of W10
+Locust load test passes at 100 hdl/min; Playwright E2E green; Upstash + CH Cloud cloud demo URL live
+2. MVP Scope
+MVP Definition: A recruiter can clone, run docker-compose up, open localhost:5173, and see live sentiment analysis happening in under 5 minutes. A technical interviewer can trace the full pipeline and receive a documented, defensible architectural answer.
+2.1 Included in MVP
+Finnhub news ingestion + deduplication + RSS fallback: Foundational; all downstream components depend on it. Dependency: Finnhub API key (free tier)
+Redis Streams consumer group + DLQ: Core interview differentiator; demonstrates event streaming expertise. Dependency: Redis 7.2 Docker
+FinBERT ONNX INT8 inference engine: Core ML differentiator; drives portfolio narrative. Dependency: Financial PhraseBank dataset; PyTorch fine-tuning (W1)
+ClickHouse schema + telemetry inserts + materialized views: Required for real latency metrics; interview credibility. Dependency: ClickHouse Docker
+Z-score drift detection (configurable threshold): Key MLOps differentiator; statistical ML monitoring story. Dependency: numpy; ClickHouse drift_alerts table
+/ping warmup + /health + /metrics endpoints: Demo stability insurance; Prometheus observability. Dependency: FastAPI; Redis; ClickHouse
+WebSocket broadcast (FastAPI → React): Real-time push semantics; no polling. Dependency: asyncio.Queue; FastAPI lifespan
+React dashboard (LiveTicker + Observability + Analytics): Visual proof; required for recruiter and interviewer impact. Dependency: Vite 5; Recharts; Zustand; WebSocket
+docker-compose.yml: Zero-friction contributor and interviewer experience via a single-command setup. Dependency: Docker 24.x
+seed_test_data.py synthetic drift injection script: Critical for live demo reliability; triggers alert on command. Dependency: ClickHouse drift_alerts
+README.md + ARCHITECTURE.md + DATA_SOURCES.md: Documentation signaling professionalism for the recruiter 6-minute test.
+Loom demo video (≤ 5 min): High impact for non-code-reading interviewers. Dependency: Working MVP
+GitHub Actions CI (lint + test + benchmark + security): Professional engineering signal; benchmark regression gate. Dependency: GitHub free tier
+2.2 Excluded from MVP
+Paper trading engine (any option): Complex independent feature; does not affect core pipeline story. Target: Phase 2 (W7-W8)
+SEC filing / EDGAR API ingestion: High complexity; separate domain; risk of scope creep. Target: Phase 3
+Alpaca brokerage integration: External dependency risk; option with real funds carries clear risk. Target: Phase 2-3
+Multi-user auth / session management: No user data handled yet; unnecessary complexity for portfolio value. Target: Phase 2 (documented)
+Production cloud deployment (AWS/GCP): docker-compose is demo-sufficient; cloud infrastructure adds cost/ops overhead. Target: Phase 3 (optional)
+Email / Slack drift alerting: Nice-to-have monitoring; Grafana alerting is preferred. Target: Phase 2
+Mobile-optimized dashboard: Laptop/desktop demo context; tablet breakpoints are acceptable. Target: Phase 2
+Portfolio P&L historical chart: Requires a stable trading engine first. Target: Phase 2
+Model registry / A/B serving: Production platform feature; not interview-critical for MVP. Target: Phase 3
+2.3 MVP Dependencies Map
+
+Component
+Depends On
+Blocks
+Financial PhraseBank dataset
+None
+train.py, evaluate.py
+finbert-int8.onnx
+train.py + export_onnx.py
+model.py, worker.py
+Redis Docker
+docker-compose.yml
+ingestor.py, worker.py
+ClickHouse Docker + schema.sql
+docker-compose.yml
+database.py, drift.py, API
+ingestor.py
+Redis, Finnhub API key
+worker.py (via stream)
+model.py
+finbert-int8.onnx
+worker.py
+drift.py
+numpy, config.py
+worker.py, drift_alerts table
+worker.py
+model.py, drift.py, database.py, Redis
+FastAPI WebSocket
+database.py
+ClickHouse Docker
+worker.py, main.py
+main.py (FastAPI)
+worker.py, database.py, Redis
+React Dashboard
+React Dashboard
+main.py WebSocket + REST
+Loom demo, README
+seed_test_data.py
+ClickHouse + worker.py
+Drift demo in interviews
+GitHub Actions CI
+All backend + frontend code
+main branch protection
+3. Engineering Task Breakdown
+Epic 1: ML Pipeline (16–22 hrs)
+Data Prep (2 hrs): Acquire & process Financial PhraseBank. Download Malo et al. dataset; inspect class distribution (2879 pos / 1363 neu / 604 neg); split 80/10/10 stratified by class.
+Data Prep (2 hrs): Build DataLoader with class balancing. Use WeightedRandomSampler for class imbalance; apply CrossEntropyLoss weights [1.0, 2.1, 4.8]; verify batch label distribution.
+Fine-Tuning (4 hrs): train.py: fine-tune ProsusAI/finbert. HuggingFace Trainer configuration (5 epochs, lr=2e-5, AdamW + warmup); checkpoint saving; handle CUDA/MPS/CPU auto-detect.
+Evaluation (2 hrs): evaluate.py: per-class F1 + confusion matrix. Load best checkpoint; compute weighted F1, per-class F1, and confusion matrix PNG; write to benchmark.json.
+ONNX Export (4 hrs): export_onnx.py: FP32 → INT8 quantization. Use optimum.exporters.onnx for FP32 export; run ORTQuantizer for INT8 dynamic quantization; benchmark FP32 vs INT8 latency (1000 runs); validate F1 delta < 2%.
+Validation (1 hr): Startup integrity check. Compute SHA-256 checksum of finbert-int8.onnx at model load; run sys.exit(1) on mismatch; document checksum in models/README.md.
+CI Benchmark (3 hrs): benchmark_ci.py for GitHub Actions. Run 1000 inferences on fixed held-out set; assert p99 < 50ms; fail CI if it regresses > 5ms from committed baseline.
+Epic 2: Infrastructure & DevOps (12–16 hrs)
+Docker (4 hrs): Multi-service configuration. Configure Redis 7.2-alpine (maxmemory 200mb, LRU policy); ClickHouse 24.3-alpine (init SQL mount, volume); Backend Dockerfile (Python 3.11-slim, non-root USER 1001); Frontend Dockerfile (node:20-alpine); map HuggingFace tokenizer cache volume.
+ClickHouse Schema (3 hrs): schema.sql: DDL for all 4 tables + indexes + TTL. Create tables: headlines, inference_telemetry, drift_alerts, paper_trades; build materialized view mv_latency_percentiles (AggregatingMergeTree); enforce 7-day TTL on all tables; build bloom_filter + minmax indexes.
+Config (2 hrs): config.py: environment variables. Map variables: FINNHUB_API_KEY, REDIS_URL, CH_HOST/USER/PASSWORD/DB, DRIFT_ALERT_Z_THRESHOLD=2.0, DRIFT_WINDOW_SIZE=100, DRIFT_MIN_SAMPLES=30, POLL_INTERVAL=60, TRADING_STRATEGY, LOG_LEVEL; enforce Pydantic BaseSettings validation on startup.
+Secrets (1 hr): Access controls. Draft .env.example with all keys as empty strings with descriptive comments; add .env entry to .gitignore; document detect-secrets pre-commit hook setup instructions in CONTRIBUTING.md.
+CI/CD (4 hrs): GitHub Actions implementation. Define 5 jobs (lint, test, ml-benchmark, security, frontend); execute ruff lint + format checks; assert pytest coverage $\ge 80\%$ with a Redis service container; integrate pip-audit and npm audit --audit-level=critical.
+Seed Script (2 hrs): seed_test_data.py: synthetic injection. Add --mode=drift: insert 50 high-confidence-positive records to trigger Z-score alert for AAPL; add --mode=bulk: insert pre-captured Finnhub headlines for offline demo workflows.
+Epic 3: Data Ingestion (10–14 hrs)
+Finnhub Client (3 hrs): Async polling implementation. Poll GET /news?category=general every POLL_INTERVAL seconds; parse response JSON into HeadlineRaw Pydantic model; handle HTTPError, JSONDecodeError, and asyncio.TimeoutError.
+Rate Limiter (2 hrs): Traffic throttling. Enforce token bucket limiter with 60 req/min ceiling; add configurable FINNHUB_MAX_REQ_PER_MIN; log warnings at 80% utilization to prevent exceeding limits.
+Deduplication (2 hrs): Identity management. Generate sha256(headline_text + ticker) hex digest; run SETNX sentistream:seen:{hash}; apply a 24-hour TTL ($86400\text{s}$) on new keys; log metrics.
+RSS Fallback (3 hrs): Source failover. Parse 3-5 financial RSS feeds (Reuters, MarketWatch, Yahoo Finance) via feedparser; activate automatically on Finnhub 429/5xx errors; normalize text to unified schema; deactivate when Finnhub recovers.
+Redis Producer (2 hrs): Message streaming. Serialize payload to JSON; execute XADD raw_headlines MAXLEN ~ 1000 * {id, ticker, headline_text, source, ingested_at}; emit Prometheus gauge ingestor_headlines_ingested_total{source}.
+Error Handling (2 hrs): Resilience structures. Integrate structlog JSON logging for all pipeline lifecycle events; map ingestor_errors_total counter; implement exponential backoff on connection loss (1s, 2s, 4s, up to 30s max).
+Epic 4: ML Inference & Drift Detection (14–18 hrs)
+model.py Engine (2 hrs): Session setup. Instantiate onnxruntime.InferenceSession('models/finbert-int8.onnx', providers=['CPUExecutionProvider']) as a module-level singleton loaded during FastAPI lifespan; fail fast on startup issues.
+model.py Engine (3 hrs): Inference flow. Load AutoTokenizer from local transformers cache volume; enforce max_length=128, padding, and truncation; wrap session.run() with time.perf_counter(); map softmax outputs to logits mapping {0: positive, 1: negative, 2: neutral}.
+model.py Engine (2 hrs): Localization guard. Ingest langdetect validation; if text is not 'en', route directly to an undefined state (InferenceResult(label='undefined', confidence=0.0)); construct typed dataclass wrapper.
+drift.py Engine (3 hrs): Statistical tracking. Implement a collections.deque(maxlen=DRIFT_WINDOW_SIZE) tracking structure; on update(score, ticker), calculate rolling np.mean and np.std; guard against degenerate state (std < 1e-10); verify sample size baseline before returning DriftSignal.
+worker.py Orchestrator (4 hrs): Process loop. Implement an async XREADGROUP GROUP sentistream_workers consumer_{PID} COUNT 10 BLOCK 1000 loop; unpack JSON strings; orchestrate model inference and drift calls; manage batch DB flushing; route exceptions to dlq_headlines.
+worker.py Orchestrator (2 hrs): Metrics emission. Populate dead-letter metadata; track Prometheus metrics worker_dlq_total{error_type}, worker_inferences_total{label}, and populate the inference_latency_seconds metrics histogram.
+worker.py Orchestrator (2 hrs): Context routing. Instantiation of a dict[str, DriftDetector] registry inside the loop wrapper keyed by ticker; lazy-init instances to isolate sliding windows and eliminate cross-ticker statistical contamination.
+Epic 5: Database Layer (8–10 hrs)
+database.py Core (2 hrs): Connection management. Initialize clickhouse-driver client with pooled abstraction (pool_size=5); manage 3x exponential retry backoff layers on write path timeouts; capture query durations via structlog.
+database.py Core (3 hrs): Persistence maps. Expose parameterized abstractions: insert_headline(HeadlineRecord), insert_telemetry(TelemetryRecord), and insert_drift_alert(DriftAlert) using type constraints instead of raw string interpolation.
+database.py Core (3 hrs): Query interfaces. Build extraction layers for frontend API consumption: query_latency_percentiles(window), query_sentiment_trends(ticker, hours), and query_drift_alerts(ticker, limit).
+Database Lifecycle (2 hrs): Migration automation. Apply schema.sql abstractions idempotently at application boot using IF NOT EXISTS assertions inside the FastAPI lifespan context.
+Epic 6: FastAPI Backend (12–15 hrs)
+Application Lifecycle (3 hrs): Startup orchestration. Map the FastAPI lifespan context manager: bootstrap state → pre-load ONNX engine → apply schema DDL → trigger XGROUP CREATE → bind async ingestion loops and background worker tasks.
+Application Monitoring (1 hr): Diagnostic hooks. Implement /ping endpoint to execute an active verification checklist (SELECT 1 on ClickHouse, check Redis connectivity, assert model load health); return HTTP 503 if degraded.
+Application Monitoring (2 hrs): Ingestion diagnostics. Implement /health endpoint to compute consumer metrics: parse connection states, calculate message depth counters, extract XPENDING lag values, and count active tables.
+Application Monitoring (1 hr): Open Metrics interface. Expose the /metrics endpoint using prometheus-client serialization formatting to ensure smooth compatibility with scraping tools.
+Transport layer (4 hrs): Real-time distribution. Implement the WebSocket /ws handler using an async memory buffer queue (asyncio.Queue) as a bridge; filter event broadcasts by ticker selections; maintain active client state registries using safe heartbeats.
+Transport layer (3 hrs): State endpoints. Document 4 dedicated historical GET routes validated via Pydantic schema parameters; explicitly isolate cross-origin resource sharing to the ALLOWED_ORIGINS setup variables.
+Epic 7: React Frontend (20–26 hrs)
+Project Foundations (2 hrs): Build setup. Initialize project boilerplate using Vite, React 18, Tailwind CSS, Recharts, and Zustand; establish cross-origin environment variables and dev server forwarding filters.
+Transport Mechanics (3 hrs): Stream integration. Implement a custom useWebSocket hook with built-in exponential backoff loops ($1\text{s} \rightarrow 2\text{s} \rightarrow 4\text{s} \rightarrow 30\text{s}$ max throttling bounds); execute message subscription messages; dispatch payloads straight to the state slices.
+State Engine (3 hrs): Client caching store. Construct a lightweight global client cache (sentimentStore) to process data feeds (FIFO structure capped at 200 items), manage latency histograms, register alerts, and export status flags.
+Component View (5 hrs): LiveTicker.jsx development. Render headlines inside an optimized layout container; style conditional state labels (green for optimistic sentiment metrics, red for bearish configurations); append origin indicators and timestamps.
+Component View (5 hrs): Observability.jsx development. Map a dynamic multi-line Recharts visualization rendering latency percentiles ($p50, p95, p99$ metrics) pulled directly from the materialized views; chart throughput and monitor dead-letter depths.
+Component View (5 hrs): Analytics.jsx development. Generate stacked area visualizations showing time-series sentiment trends paired with a localized line chart for tracking statistical deviations ($|Z| > 2.0$ boundaries); expose a chronological alert diagnostic log.
+Component Frame (3 hrs): UI Layout assembly. Structure a high-contrast dark layout canvas featuring an active state diagnostic header bar; add a reconnect notification panel; verify readability contrast alignments.
+Epic 8: Testing (10–14 hrs)
+Logic Checking (2 hrs): Unit testing drift.py. Build explicit test assertions checking outlier response states, window constraints, edge case protections, and context isolation behaviors.
+Logic Checking (1 hr): Unit testing inference behaviors. Verify signature formats, confidence bounding boundaries, non-English extraction workflows, and timing tracks.
+Logic Checking (1 hr): Unit testing ingestion steps. Validate hash stability parameters, deduplication filters, and failover network triggers.
+Integration verification (2 hrs): Event data paths. Assert at-least-once message delivery using isolated execution test containers; process stream messages, trace worker state parsing loops, and check acknowledgment records.
+Integration verification (2 hrs): Persistence structures. Push test rows to storage nodes; execute chronological range queries; confirm database view updates match expected performance metrics.
+Integration verification (1 hr): Router validations. Check diagnostic routes under clear failure modes; verify HTTP 503 states when backing service layers report faulty states.
+E2E Validation (3 hrs): Interface testing via Playwright. Automate full client interface loading flows; assert real-time event updates, layout scaling tolerances, and alert rendering processes.
+System Hardening (1 hr): Volume testing via Locust. Simulate ingestion pipelines pushing 100 messages/min; check message drop rates, track memory consumption limits, and measure latency degradation curves.
+Epic 9: Paper Trading Engine — Phase 2 (18–24 hrs)
+Trading Core (4 hrs): Signal generation. Define an abstract strategy layout interface; create ThresholdStrategy to process trading metrics (generate buy triggers when positive weights exceed a 0.75 threshold); add a 60-second execution cooldown per ticker.
+Trading Core (2 hrs): Execution constraints. Apply fixed position size metrics allocating exactly 5% of trading capital assets per valid trigger, bounded by explicit safety scaling rules.
+Trading Core (2 hrs): Pricing interfaces. Wire a fallback market valuation data path consuming market endpoints; build 30-second memory caching matrices to manage API token volume.
+Persistence maps (3 hrs): Transaction tracking. Build localized transaction ledger frameworks (paper_trades schemas); implement portfolio valuation metrics to compute trading success rates and unrealized capital tracks.
+Transport integration (2 hrs): Portfolio routes. Build dedicated backend GET endpoints returning data structures to compute asset changes over time.
+Component View (5 hrs): UI implementation (Portfolio.jsx). Build line graph components rendering cumulative financial tracks over time; design current position ledgers displaying tracking indicators and strategy selectors.
+Configuration (2 hrs): Selection models. Expose feature selector variables; map internal strategy registries to initialize required logic states upon application boot.
+System wiring (2 hrs): Loop integration. Bind trading logic hooks directly inside background execution worker threads to ensure financial checks process immediately after completing model evaluations.
+4. Sprint Planning (Week-by-Week)
+Week 1 — ML Model Foundation
+Objective: Train, evaluate, and export a production-ready FinBERT ONNX model.
+Deliverables:
+Financial PhraseBank dataset downloaded and split (80/10/10 stratified).
+train.py completes 5-epoch fine-tuning; best checkpoint saved.
+evaluate.py produces benchmark.json with weighted F1 ≥ 0.88.
+export_onnx.py outputs finbert-int8.onnx via INT8 dynamic quantization.
+benchmark_ci.py validates p99 < 50ms on 1,000 inference runs.
+SHA-256 checksum generated and documented in models/README.md.
+Risks & Mitigations:
+Risk: F1 score drops below 0.88 after fine-tuning. Mitigation: Pre-trained FinBERT baseline is ~0.87 without fine-tuning — acceptable fallback. Increase epochs to 7 if needed.
+Risk: Training time exceeds 4 hours on standard CPU. Mitigation: Offload training execution to Google Colab free GPU tier (T4 environment); core runtime inference remains strictly CPU-only.
+Risk: Quantization loss causes F1 drop > 2%. Mitigation: Fall back to the FP32 ONNX asset configuration and update the benchmark log noting performance adjustments.
+Dependencies: None (no other components exist yet).
+Week 2 — Infrastructure & Database
+Objective: Establish the multi-container environment with automated schema setups.
+Deliverables:
+docker-compose.yml operational: Redis 7.2, ClickHouse 24.3, backend placeholder, frontend placeholder.
+schema.sql applied: all tables + mv_latency_percentiles view + data storage policies created.
+config.py wired with validation via Pydantic BaseSettings.
+.env.example created; secret protection hooks documented.
+Diagnostic routes (/ping and /health) return success status.
+CI pipeline skeletal configuration mapped out for linting and test tracking.
+Risks & Mitigations:
+Risk: ClickHouse Cloud free-tier connection requirements block connection tests. Mitigation: Bind local Docker ClickHouse instances as the primary targets; relegate cloud networks to late staging.
+Risk: Slow multi-container download execution impacts first startup. Mitigation: Document an explicit image pre-pull step in the startup runbook guidelines.
+Dependencies: finbert-int8.onnx from Week 1 (mounted into backend execution container).
+Week 3 — Ingestion Pipeline & Worker
+Objective: Stream live headlines from provider endpoints through to storage.
+Deliverables:
+ingestor.py operational: polling logic, deduplication filters, and failover handlers.
+model.py operational: singleton configurations, text transformations, and timing.
+drift.py operational: rolling window math completed with active unit verification.
+worker.py operational: event loops, model runs, batch saves, and error routing.
+ClickHouse ingestion tables verified populating under continuous runtime flows.
+Risks & Mitigations:
+Risk: External API endpoint token limits hit during debugging workflows. Mitigation: Inject pre-recorded news headlines using a local seed script tool to handle offline testing.
+Risk: ONNX files missing from execution directory at application boot. Mitigation: Set read-only volume tracking flags on the container and verify file checksums on startup.
+Dependencies: Infrastructure structures from Week 2; fine-tuned ONNX asset from Week 1.
+Week 4 — Drift Detection & API
+Objective: Activate system telemetry endpoints and statistical alert layers.
+Deliverables:
+Isolated tracking contexts running via the worker registry.
+Automated database saving hooks wired to log structural deviations.
+Verification script triggers alert processing on demand in < 10 seconds.
+FastAPI server manages loops, handles WebSockets, and hosts historical routes.
+Telemetry diagnostic endpoints return open metric text data.
+Risks & Mitigations:
+Risk: Processing queues block concurrent transport loops. Mitigation: Isolate ingestors, workers, and broadcast layers into distinct async tasks to prevent event loop blockages.
+Risk: Natural data patterns fail to trigger deviations within interview demonstration windows. Mitigation: Embed a dedicated synthetic injection parameter inside the data script tool to trigger states on demand.
+Dependencies: Complete data ingestion layers and worker logic from Week 3.
+Week 5 — React Dashboard
+Objective: Launch client dashboard interface plotting live performance feeds.
+Deliverables:
+Interface framework configured with charts and state management.
+Stream transport hook manages connections, retries, and data dispatching.
+Real-time headline list features contextual layout badges.
+Metric visualizations display performance tracks directly from database views.
+Analytics view displays historical charts and system anomaly records.
+Interface layouts scale across viewports and meet contrast requirements.
+Risks & Mitigations:
+Risk: High message throughput causes interface rendering lag or stutter. Mitigation: Debounce store update dispatches to 500ms bounds and wrap graphs in optimized rendering constraints.
+Risk: Cross-origin permission bugs drop communication paths. Mitigation: Apply routing proxies inside the asset engine configuration to map traffic rules cleanly during development.
+Dependencies: Operational backend transport layer and metric endpoints from Week 4.
+Week 6 — MVP Polish & Documentation
+Objective: Stabilize, document, and test the system for presentation.
+Deliverables:
+End-to-end multi-container pipelines pass validation from a completely cold boot in < 3 minutes.
+Documentation includes project overviews, architectural trade-offs, and reference citations.
+Validation paths show passing checks across all integration and unit pipelines.
+Application codebase matches version tags on production branches.
+High-impact summary walkthrough video recorded demonstrating full execution paths.
+Risks & Mitigations:
+Risk: Documentation layouts contain too much dense text for a quick technical review. Mitigation: Run usability checks with outside developers to ensure core setups parse in under 30 seconds.
+Risk: Presentation runtime flows glitch during video recording captures. Mitigation: Separate capture tracking into independent segments before final rendering compilation.
+Dependencies: Complete delivery of core system features from Weeks 1–5.
+Week 7-8 — Paper Trading Engine (Phase 2)
+Objective: Translate streaming analytics weights into active simulated transactions.
+Deliverables:
+Strategic rule evaluation interface implements execution cooling logic.
+Capital manager features automated calculation engines to size trade blocks.
+Ledger tables process trades, compute returns, and track position matrices.
+Front-end panels plot value tracking graphs and position tables.
+Background worker thread executes transaction queries immediately after evaluation loops.
+Risks & Mitigations:
+Risk: Live quote queries block background loops or hit pricing route limits. Mitigation: Apply short memory-caching structures to price checks; fall back to historical limits on connection drops.
+Dependencies: Complete operational platform baseline from Week 6.
+Week 9-10 — Production Hardening (Phase 2)
+Objective: Run scale stress checks and establish live deployment mirrors.
+Deliverables:
+Scale testing engine validates performance parameters under sustained load blocks.
+Complete user scenario coverage tested via front-end browser scripts.
+Live infrastructure channels route messages across cloud data nodes.
+Automated alerting boundaries configured on monitoring servers to catch issues.
+Codebase features complete change logs and tags ready for release.
+Risks & Mitigations:
+Risk: Free cloud hosting nodes spin down on inactivity, causing presentation delays. Mitigation: Use diagnostic endpoints within the initialization sequence to pre-warm remote execution spaces before use.
+Risk: High sustained throughput tests overwhelm transaction thresholds on remote storage tiers. Mitigation: Limit high-volume load test configurations strictly to local execution spaces.
+Dependencies: Complete delivery of all system capabilities from Weeks 1–8.
+5. Folder Structure
+
+
+6. Database Implementation Order
+6.1 Table Creation Sequence
+All database storage schemas are contained within schema.sql and initialized idempotently during application startup using IF NOT EXISTS declarations.
+
+headlines: The primary entity table. All subsequent data records map back to a corresponding headline_id or join across its ticker classifications. Must be initialized first.
+inference_telemetry: Logs performance metadata linked to headline_id. Constructed immediately after core entities to maintain database architecture relationships.
+drift_alerts: Tracks system context states; maps target records explicitly against ticker indexes. Initialized third to group metrics tables together.
+paper_trades: Logs transaction histories linked to signal IDs. Part of Phase 2 capabilities, though structural placeholders exist in initial schemas.
+mv_latency_percentiles (Materialized View): Computes analytics aggregates straight from the telemetry logs. Requires the source tables to be defined first.
+6.2 Migration Plan
+SentiStream v1 uses an idempotent schema execution framework at application startup, removing the need for a heavy migration engine during the initial MVP. As development scales through subsequent phases, operations migrate to structured execution tracks:
+migrations/001_initial_schema.sql — Captures baseline database and view configurations.
+migrations/002_add_trading_strategy_column.sql — Modifies active schemas to append operational context parameters (Phase 2).
+migrations/003_add_non_english_headlines_table.sql — Establishes separate tables for filtering non-English records (Phase 2).
+Execution Engine: A lightweight file iteration runner tracks updates inside a schema version ledger table at startup.
+6.3 Seed Data Strategy
+Seed Type
+Script / Method
+Purpose
+When to Run
+Synthetic drift injection
+seed_test_data.py --mode=drift --ticker=AAPL
+Inserts 50 high-confidence records into data tracks; fires Z-score triggers in < 10 seconds.
+Prior to interview demonstrations; validates interface response states.
+Bulk headline seeding
+seed_test_data.py --mode=bulk
+Bulk loads 200 archived data entries straight from file fixtures into storage.
+Enables offline demonstration mode; handles pipeline isolation testing.
+Schema verification
+seed_test_data.py --mode=verify
+Runs verification checks across all active data frameworks to validate table health status.
+Executed immediately after infrastructure initialization blocks.
+Performance baseline
+benchmark_ci.py --warm
+Runs a continuous block of 1000 inferences to save timing results to configuration paths.
+Executed after optimization runs; functions as a deployment gate step.
+7. API Implementation Order
+Build Sequence Framework: Endpoints are constructed only after their underlying storage foundations are verified. Do not mock an active route before verifying its backend data pipeline.
+
+GET /ping (Priority 1 — Ops): Verifies engine initialization states. Runs fast verification calls across storage nodes and caches to return system status signals. Built: Week 2
+GET /health (Priority 1 — Ops): Reports active telemetry metrics. Captures stream lengths, counts pending records, checks consumer groups, and monitors storage health. Built: Week 2
+POST /auth/* (Priority 2 — Auth): Implements user identity checking and routing boundaries using access token configurations. Built: Phase 2 (Documented upgrade path)
+WebSocket /ws (Priority 3 — Core Streams): Real-time event communication channel. Forwards processed metrics, pushes anomaly entries, and registers subscribers using an async queue framework. Built: Week 4
+GET /api/v1/sentiment-trends (Priority 3 — Core Streams): Extracts time-series distributions grouped by chronological tracking windows. Built: Week 4
+GET /api/v1/drift-alerts (Priority 3 — Core Streams): Returns historical statistical anomalies sorted by transaction time. Built: Week 4
+GET /api/v1/latency-percentiles (Priority 4 — Business Logic): Queries pre-computed processing benchmarks straight from database views. Built: Week 4
+GET /metrics (Priority 4 — Business Logic): Exposes performance registers structured in open metrics formats for parsing tools. Built: Week 4
+Inference Pipeline (Priority 5 — AI Services): Internal model call orchestration; encapsulated away from public API routes to preserve pipeline boundaries. Built: Week 3
+GET /api/v1/portfolio (Priority 6 — Analytics): Phase 2 capability. Aggregates trading ledgers to return performance stats and capital tracking maps. Built: Week 8
+8. Frontend Implementation Order
+
+8.1 Step-by-Step UI Construction
+Vite Scaffold: Initialize project boilerplate with styling engines and graph dependencies. Verification: Local development compilation loops pass without warnings.
+Zustand Store: Construct the central state store framework (sentimentStore) with update routes. Verification: Dispatch mock data actions from browser consoles; check state update accuracy.
+useWebSocket Hook: Build the event transport layer with connection monitoring capabilities. Verification: Open network panels; assert incoming message parsing and state distribution accuracy.
+Layout Frame: Assemble the baseline interface structure with headers and connection alert indicators. Verification: Elements position correctly; status logs show accurate communication signs.
+LiveTicker.jsx: Build the real-time event ticker item. Display headline streams with dynamic typography and conditional badges. Verification: Data cards render smoothly; contents clip according to viewport limits.
+Observability.jsx: Implement the line graph components plotting pipeline processing latency tracks. Verification: Chart paths render accurately; data metrics match current backend speeds.
+Analytics.jsx: Build the stacked charts view tracking statistical anomaly indicators and logs. Verification: Analytics views update automatically following synthetic data injections.
+Error Tracking: Wire safety indicators and backoff trackers to catch connection timeouts. Verification: Stopping backend processes triggers the client alert state instantly.
+Polish: Review interface responsiveness metrics, run visibility contrast audits, and refine cross-device layouts. Verification: Accessibility diagnostic scores match target metrics.
+8.2 State Management Map
+sentiments: Array tracking core real-time headlines. Uses a FIFO queue capped at 200 records. Mutated by: WebSocket text arrivals. Consumed by: LiveTicker.jsx.
+latencyBuckets: Array mapping performance percentiles. Mutated by: Stream metrics payload updates and REST queries. Consumed by: Observability.jsx.
+driftAlerts: Array logging system statistical anomalies. Mutated by: WebSocket alert flags. Consumed by: Analytics.jsx.
+sentimentTrends: Time-series array capturing processing summaries over target windows. Mutated by: Periodic historical endpoint polling loop updates. Consumed by: Analytics.jsx.
+connectionStatus: State variable mapping the connection lifecycles ('connecting' | 'connected' | 'reconnecting' | 'disconnected'). Mutated by: Transport hook lifecycle loops. Consumed by: Status banners and indicators.
+9. AI/ML Implementation Plan
+9.1 Data Preparation & Training Setup
+Data Acquisition: Fetch the reference classification record text profiles from source repositories into local workspace targets.
+Data Profiling: Inspect sample distribution sizes ($2879 \text{ positive}, 1363 \text{ neutral}, 604 \text{ negative}$). Address the $4.8\times$ representation imbalance across target categories.
+Partition Strategy: Execute a stratified split allocation mapping records across $80/10/10$ train, test, and validation matrices using cross-validation tooling.
+Dataset Design: Build processing wrappers tokenizing incoming inputs; map output data values straight into structural model vector types on initialization.
+Batch Management: Initialize data load pipelines using weighted random sampling arrays ($w_i = \frac{1}{\text{class\_count}_i}$) to prevent dominant categories from biasing the learning steps.
+9.2 Fine-Tuning Execution
+Base Initialization: Instantiate standard multi-class sequence models (AutoModelForSequenceClassification) targeting 3 distinct output categories using reference baseline model weights.
+Trainer Configuration: Schedule optimization passes across 5 loops; manage learning rates via linear warmup architectures paired with standard weight decay techniques.
+Loss Adaptation: Inject class scaling vectors ($[1.0, 2.1, 4.8]$) directly into the cross-entropy calculation step to balance evaluation feedback.
+Optimization Path: Utilize automated iteration hooks to save checkpoint parameters based on validation metrics; fall back to pre-trained limits if tuning targets drop.
+Performance Check: Load optimized parameter check states; evaluate model accuracy bounds across test partitions; assert weighted scoring thresholds meet expectations ($\ge 0.88$).
+9.3 ONNX Export & Quantization Flow1. FP32 Conversion: Process target fine-tuned checkpoints through conversion utilities to output a standard model structure.
+2. Quantization Run: Execute INT8 dynamic optimization targeting CPU instruction sets; save compressed execution weights.
+3. Inference Benchmarking: Execute a sequence of 1000 operational test passes; log processing histograms to verify speed targets match expectations.
+4. Scoring Validation: Confirm accuracy regressions remain within safe bounds ($< 2\%$ drop); block optimized deployment tracks if variations exceed limits.
+5. Integrity Mapping: Calculate SHA-256 string digests of the output file assets; populate structural description files to verify asset security states on startup.
+9.4 Production Serving Specifications
+Lifecycle Management: Initialize engine operations exactly once via internal hooks during server startup using singleton patterns; decouple loops from request paths.
+Resource Isolation: Load tokenizer modules directly from mapped volume paths; lock remote data fetching to guarantee isolated execution.
+Data Processing: Transform input configurations into uniform arrays; enforce constraints ($128\text{ tokens}$ max width) to protect pipeline thresholds.
+Result Mapping: Parse classification tracks using calculation logic to extract category parameters and match probability bounds.
+Telemetry Diagnostics: Capture iteration step durations using timing frameworks; emit indicators to tracking systems.
+Localization Guard: Validate character structure properties; route non-English text profiles away from core logic loops directly into placeholder contexts.
+Startup Protections: Validate asset file signatures on startup; block server initialization if file states vary from verification configurations.
+9.5 Drift Detection Design
+The drift verification layer monitors data changes across sliding arrays of classification outputs using continuous probability scores instead of category labels to ensure smoother statistical distributions.
+
+
+window_size (Default: 100): Balances statistical context width with execution speed; covers typical pipeline volume to identify trend movements.
+z_threshold (Default: 2.0): Aligns with standard statistical thresholds ($95\text{th percentile}$ standard variations) to capture significant data adjustments while ignoring background noise.
+min_samples (Default: 30): Enforces minimum sample data volume thresholds prior to triggering validations; eliminates false alarms during cold-start lifecycles.
+10. Testing Plan
+10.1 Unit Tests (pytest)
+drift.py (Outlier Detection): Seed the window with stable baseline values ($0.5$ score); push an extreme value ($0.99$); assert that the returned Z-score registers $> 2.0$ with a bullish direction flag.
+drift.py (Sample Boundaries): Push 29 data entries into a new window; attempt validation checks; verify that the system suppresses alerts until sample size bounds are reached.
+drift.py (Degenerate Data handling): Push 50 identical records ($0.5$ score) into active windows; check output behaviors; confirm that systems block division errors by handling zero standard deviation states safely.
+drift.py (Context Isolation): Trigger alert variations within a target ticker context; query adjacent validation spaces; confirm that trend tracking logic isolates tracking matrices cleanly across tickers.
+model.py (Classification Validity): Ingest standard mock phrases; verify outputs match expected layout types; confirm probability values map within legal boundaries ($[0.0, 1.0]$).
+model.py (Localization Rejection): Inject foreign text sequences; confirm classification parameters evaluate to undefined labels with zero confidence scores.
+model.py (Timing Tracks): Execute processing calls; assert that duration metrics capture positive float numbers.
+ingestor.py (Hash Integrity): Process target text sequences; check signature outputs; assert that generation values are deterministic and stable across identical payloads.
+ingestor.py (Deduplication Logic): Route duplicate data payloads across ingestion paths consecutively; verify storage states; assert that total record size remains unchanged.
+schemas (Data Mapping Constraints): Attempt model compilation missing required validation properties; verify framework routing catch loops trigger structural data validation errors.
+10.2 Integration Tests (pytest + testcontainers)
+Message Ingestion Loops: Boot isolated message queues; publish payloads into raw data streams; consume entries using consumer group contexts; verify message content properties and ensure pending tracking lists clear on acknowledgment.
+Storage Layer Audits: Initialize isolated data servers; apply DDL schema definitions; execute transaction inserts; verify data visibility targets across analytical ranges and check timestamp alignments.
+Database View Aggregations: Seed historical telemetry records into analytical tables; check view tracking query responses; assert output results map accurately across targeted aggregation ranges.
+Service Framework Checks (Success): Verify application monitoring routes under clear conditions; check response payloads; ensure network components report warm and operational.
+Service Framework Checks (Failure): Drop connection routes across dependency layers; execute diagnostic endpoint calls; assert status responses handle errors gracefully, returning HTTP 503 codes.
+Pipeline Capacity Metrics: Set mock pending tracking lists; query state routes; verify output telemetry data displays accurate consumer lag values.
+Transport layer Broadcasts: Attach multiple mock connection consumers to real-time transport loops; trigger message updates; verify event delivery targets match across attached listeners.
+10.3 E2E Tests (Playwright)
+Dashboard Initial Load: Launch front-end framework nodes; execute page navigation tests; verify visual elements display within required duration thresholds ($< 2000\text{ms}$ Largest Contentful Paint) without console errors.
+Transport Loop Arrivals: Open communication paths; watch transport transactions; confirm visual list containers register new elements containing correct components within standard polling boundaries.
+Alert Rendering Processes: Trigger script utilities to inject structural variations; watch visual dashboard components; assert layout modification alert signals update across visual displays in $< 10$ seconds.
+Graph Updates: Maintain open communication paths across multiple event cycles; audit graph tracking views; verify lines refresh correctly to plot performance trend shifts.
+Transport Resiliency Handlers: Force backend disconnections; watch client interfaces; verify system warning notifications display immediately, and confirm that loops recover automatically upon service restoration.
+10.4 Load Tests (Locust)
+Volume Threshold: Set ingestion pipeline simulation tasks to push 100 messages/min for a continuous 5-minute block ($500 \text{ total elements}$).
+Pass Criteria: Dead-letter logs must report zero drops; inference speed thresholds must remain within baseline constraints ($p99 < 50\text{ms}$ execution benchmarks); message stream tracking depths must remain bounded without triggering memory errors.
+Execution Constraint: Ingest volume actions strictly within local multi-container spaces to protect cloud memory limits.
+10. task Checklist for Interview Verification
+11. Deployment Plan
+11.1 Development Environment
+Backend: Operational multi-container process structures; configuration maps pull settings straight from environment files; reference models are mounted into container runtimes via read-only routes.
+Frontend: Front-end static dev server nodes handle application delivery; communication proxy matrices forward asset queries straight to backend ports.
+Redis: Container instance tracks message loops; configuration policies disable persistent tracking modifications (--save '') and constrain memory limits to protect local environments.
+ClickHouse: Storage database instance tracks persistence structures; transactional schemas are applied automatically at container startup using initialization volumes.
+ML Pipelines: Training and quantization tasks execute inside separate local environments or notebook frameworks to decouple modeling steps from deployment steps.
+11.2 CI Environment (GitHub Actions)
+Linting Job: Runs on standard platforms; checks code format consistency across repositories; flags issues before integration steps.
+Testing Job: Launches test environments with backing tracking services attached; executes integration checks; blocks deployment if coverage thresholds drop.
+Modeling Benchmark Job: Compiles benchmark loops; audits processing speed parameters across reference files; blocks deployment loops if variations drop below speed thresholds.
+Dependency Security Job: Audits application dependency manifests against vulnerability ledgers; catches library configuration issues.
+Frontend Build Job: Compiles package assembly tasks; checks interface type definitions; catches deployment issues before generation steps.
+11.3 Cloud Staging Specifications (Production Demo Upgrade)
+Backend Layer: Hosted on scalable application nodes; configurations map variables through platform panels; startup rules use connection validation steps to handle cold starts smoothly.
+Frontend Layer: Application assets distributed globally via content distribution networks; transport settings reuse proxy redirect rules to handle api queries securely.
+Cache Layer: Remote serverless data configurations handle message loop routing; operations connect via encrypted pathways using access security tokens.
+Storage Layer: Cloud columnar databases handle analytics storage; retention rules expire old entries automatically to preserve row tracking limits.
+Traffic Control: Dedicated token rate limiters track ingestion pathways; loops manage connections safely to protect external data quotas.
+11.4 Demo Runbook (Pre-Interview Check)
+Execute git pull origin main to pull latest checked modifications onto presentation environments.
+Run docker-compose pull to cache application container images locally before beginning the live review.
+Trigger docker-compose up --build -d to launch multi-container resources cleanly in isolated background modes.
+Run curl localhost:8000/ping to check platform status dependencies before presentation windows start.
+Launch browser interfaces at targeted development ports; confirm visual layouts render correctly.
+Open standalone terminal windows tracking container logging pipelines to monitor real-time inference steps during interviews.
+Prepare pre-recorded presentation backups as a safety fallback in case live internet dependencies experience drops.
+12. Technical Risks & Mitigations
+Risk Vector
+Likelihood
+Impact
+Engineering Mitigation Strategy
+Task Owner
+Model optimization results drop below target metrics
+Low
+Medium
+Pre-trained baseline performance provides a solid fallback; expand optimization iterations or review tuning parameters if scores drift.
+Week 1
+Quantization changes cause significant accuracy loss
+Medium
+Low
+Fall back to standard weight layouts; accept the minor processing duration trade-offs as speed parameters remain within target bounds.
+Week 1
+External API access tokens hit rate limits during review
+Medium
+High
+Automated ingestion structures toggle data channels immediately; rely on synthetic file fixtures to support local debugging workflows.
+Week 3
+Model file sizing exceeds standard source control limits
+Medium
+Low
+FinBERT INT8 dynamic files align close to typical repo thresholds; utilize large asset tracking structures or load directly from external hubs if size targets drift.
+Week 1
+Cloud storage resource limits exhausted by pipeline volume
+Medium
+High
+Enforce database retention policies to purge metrics records automatically; relegate cloud networks to late staging.
+Ongoing
+Remote message queue memory caps exceeded
+Low
+High
+Bounded stream constraints trim transaction sizes on new entries; apply explicit expiration values to protect data spaces.
+Ongoing
+Feature expansion causes scope creep across timelines
+High
+High
+Enforce phase gate boundaries; ensure primary pipeline components achieve stable release states before introducing advanced capabilities.
+All Weeks
+Abrupt client disconnections leak server communication memory
+Medium
+Medium
+Wrap transport broadcast layers inside exception tracking handlers; remove dead connection identifiers from the active registry immediately.
+Week 4
+Live pipeline operations drop during presentation reviews
+Medium
+High
+Retain summary presentation records as primary validation evidence; use static storage files to guarantee presentation continuity.
+Week 6
+Columnar query calls block async processing tasks
+Low
+Medium
+Use asynchronous database connection wrappers explicitly across loops; do not mix synchronous input-output blocking code within async threads.
+Week 4
+High graph rendering volume degrades interface performance
+Low
+Low
+Debounce client store distributions to safe intervals; limit storage queue arrays to 200 rows.
+Week 5
+Container bootstrap timing drops backend connection pools
+Medium
+Medium
+Embed health checking parameters inside configurations; design applications to retry connections dynamically until dependencies report active statuses.
+Week 2
+13. Definition of Done (DoD)
+13.1 News Ingestion Pipeline (FR-001)
+Functional Requirements: Ingested headlines must stream to the data queues within 5 seconds of pulling; failover routing must toggle within 10 seconds of source drops; duplicated articles must drop automatically.
+Testing Requirements: Ingestion logic passes determinism verification checks; failover channels show passing outcomes under synthetic testing validations.
+Performance Requirements: Ingestion counters accurately record element arrival rates; storage lengths remain bounded below ceiling parameters without connection dropped events.
+Security Requirements: Access secrets are isolated cleanly from execution logs; inputs map across strict data structures to eliminate validation risks.
+13.2 ONNX Inference Engine (FR-002)
+Functional Requirements: Engine processes input text to return valid classification tags and metrics; localization filters successfully catch foreign payloads; startup loops block if asset validation fails.
+Testing Requirements: Evaluation verification checks confirm speed properties match targets ($p99 < 50\text{ms}$ benchmarks); performance accuracy tests pass classification targets ($\ge 0.88$ F1 metrics).
+Performance Requirements: High-tier speed thresholds match targeted curves; core model parameters are instantiated exactly once at application startup to eliminate request execution overhead.
+Security Requirements: Asset integrity signatures pass checksum verification checks on boot; dependencies are decoupled to minimize container sizes.
+13.3 Z-Score Drift Detection (FR-003)
+Functional Requirements: Structural database inserts log data variations within 5 seconds of anomaly occurrences; validation logic suppresses alarms if data volumes drop below baseline parameters; boundaries adjust via configuration variables.
+Testing Requirements: Deviation math routines achieve absolute coverage marks across all processing conditions; validation checks run clean across sustained sample volumes.
+Performance Requirements: Verification calculations complete within sub-millisecond windows to minimize worker processing loops; analytics logging commands execute asynchronously.
+Security Requirements: Math models isolate evaluation spaces completely across tickers to prevent cross-contamination errors; calculations handle zero-variance data sets safely.
+13.4 Real-Time Dashboard (FR-004)
+Functional Requirements: Client interfaces load within expected duration limits ($< 2\text{s}$ benchmarks); message displays update immediately following event arrivals; analytics charts map real data points; connection alert indicators display accurately on drops.
+Testing Requirements: Layout performance metrics match targets across browser automation checks; visual components pass contract check expectations; contrast levels meet readability compliance scores.
+Performance Requirements: UI interaction targets match responsive performance curves; rendering loops process messages smoothly without causing processing lag on rapid transaction bursts.
+Security Requirements: Interface assembly targets exclude sensitive tokens or secrets; connection origins match targeted boundaries; cross-origin traffic is restricted to allowlisted endpoints.
+13.5 Multi-Container Orchestration (FR-006 Adjacent)
+Functional Requirements: Initialization commands launch backing services and containers smoothly; tracking endpoints return valid status codes within 60 seconds of execution; baseline verification tasks exit with success codes.
+Testing Requirements: Cold-boot setup scenarios pass completely on clean environments; codebase builds pass assembly checks without deployment errors.
+Performance Requirements: System startup to operational signal transitions complete in under 3 minutes; pipeline data updates reach client dashboard layers in under 5 minutes.
+Security Requirements: Container privileges are constrained to enforce non-root boundaries; access routing bounds isolate resources securely; deployment variables are excluded from tracking repositories.
+14. Final Development Checklist
+Week 1 — ML Model
+[ ] Download Financial PhraseBank dataset; verify class distribution.
+[ ] Implement WeightedRandomSampler DataLoader with class weights [1.0, 2.1, 4.8].
+[ ] Run train.py: 5 epochs, lr=2e-5, AdamW; save best checkpoint by validation F1 metrics.
+[ ] Run evaluate.py: confirm weighted F1 $\ge 0.88$ on test set.
+[ ] Generate confusion_matrix.png; commit to ml_pipeline/results/.
+[ ] Run export_onnx.py: FP32 ONNX $\rightarrow$ INT8 dynamic quantization.
+[ ] Run benchmark_ci.py: confirm p99 < 50ms over 1,000 inference runs.
+[ ] Verify INT8 F1 delta < 2% vs FP32 baseline.
+[ ] Generate SHA-256 checksum for finbert-int8.onnx; document in models/README.md.
+[ ] Commit finbert-int8.onnx (if $\le 100\text{MB}$) or configure large file storage solutions.
+[ ] Commit benchmark.json to ml_pipeline/results/.
+Week 2 — Infrastructure
+[ ] Write docker-compose.yml: Redis 7.2-alpine + ClickHouse 24.3-alpine + backend + frontend.
+[ ] Add ClickHouse healthcheck in docker-compose.yml (backend depends_on: service_healthy).
+[ ] Write schema.sql: all 4 tables + mv_latency_percentiles materialized view + TTLs + indexes.
+[ ] Write backend Dockerfile (Python 3.11-slim, USER 1001, non-root).
+[ ] Write frontend Dockerfile (node:20-alpine).
+[ ] Write config.py with Pydantic BaseSettings; validate FINNHUB_API_KEY is non-empty at startup.
+[ ] Create .env.example with all required keys (empty values).
+[ ] Add .env to .gitignore; add detect-secrets to .pre-commit-config.yaml.
+[ ] Implement GET /ping (ClickHouse SELECT 1 + Redis PING + ONNX model loaded check).
+[ ] Implement GET /health (XPENDING + XLEN + ClickHouse row count + per-component status).
+[ ] Verify docker-compose up produces /ping 200 within 60 seconds.
+[ ] Set up GitHub Actions CI framework skeleton for linting and core checks.
+Week 3 — Ingestion & Worker
+[ ] Implement ingestor.py: async Finnhub polling + token-bucket rate limiter.
+[ ] Implement SHA-256 deduplication: SETNX sentistream:seen:{hash} with 24h TTL.
+[ ] Implement RSS fallback (feedparser): activate automatically on Finnhub 429/5xx errors.
+[ ] Implement XADD raw_headlines MAXLEN ~1000 with HeadlineRaw serialized as JSON strings.
+[ ] Add structlog structured logging to ingestor.py; wire Prometheus ingestor_headlines_ingested_total counter.
+[ ] Implement model.py: ONNX singleton load + SHA-256 checksum verification + fast exit on failure.
+[ ] Implement tokenizer inference with max_length=128; integrate latency measurement loops.
+[ ] Implement non-English language detection (langdetect); return InferenceResult(label='undefined').
+[ ] Implement drift.py DriftDetector class; write all 4 core unit tests; confirm all pass.
+[ ] Implement worker.py: XREADGROUP GROUP sentistream_workers consumer_{PID} COUNT 10 BLOCK 1000.
+[ ] Implement per-ticker DriftDetector registry tracking mechanisms inside worker.py.
+[ ] Implement dead-letter queue routing: XADD dlq_headlines + XACK on loop exceptions.
+[ ] Implement database.py: ClickHouse client pooling + insert abstractions.
+[ ] Verify core ingestion tables populate under active pipeline streaming.
+[ ] Run the complete baseline unit test suite to verify module integration.
+Week 4 — API & Drift
+[ ] Implement database.py: insert_drift_alert + all 4 metric extraction queries.
+[ ] Wire drift.py $\rightarrow$ database.py: configure background loops to persist statistical anomaly signals.
+[ ] Verify seed_test_data.py --mode=drift: confirm anomaly alert registers in under 10 seconds.
+[ ] Implement main.py FastAPI lifespan handlers to orchestrate application boot stages.
+[ ] Implement WebSocket /ws: configure processing queues, loop broadcasts, and client tracking heartbeats.
+[ ] Implement GET /api/v1/latency-percentiles: query pre-aggregated views; validate parameters.
+[ ] Implement GET /api/v1/sentiment-trends: time-series summary queries with parameter filtering.
+[ ] Implement GET /api/v1/drift-alerts: fetch chronological anomaly entries with limiting rules.
+[ ] Implement GET /metrics: serialize performance values into target metrics presentation formats.
+[ ] Isolate cross-origin resource permissions strictly to project setup variables.
+[ ] Run integration check paths to confirm stream lifecycles across backing nodes.
+[ ] Confirm integration checks pass across the central branch testing tracks.
+Week 5 — Frontend
+[ ] Initialize UI project workspace with styling rules and data visualization packages.
+[ ] Configure proxy variables to guide traffic cleanly across development layout lines.
+[ ] Implement sentimentStore: wire the central data store tracking matrices and actions.
+[ ] Implement useWebSocket hook: configure transport loops with robust connection retries.
+[ ] Implement App.jsx: assemble high-contrast layout grids featuring status displays.
+[ ] Implement LiveTicker.jsx: build scroll view components mapping sentiment indicator chips.
+[ ] Implement Observability.jsx: plot multi-line performance charts driven by backend views.
+[ ] Implement Analytics.jsx: render analytics distributions and statistical anomaly logs.
+[ ] Complete interface contrast checks to verify text accessibility benchmarks.
+[ ] Review display adjustments to confirm proper vertical scaling on compact viewports.
+[ ] Automate end-to-end interface checks; run layout scenarios locally to confirm stability.
+[ ] Confirm compilation and package build targets pass execution checks.
+Week 6 — MVP Polish
+[ ] Confirm full pipeline builds launch cleanly from cold boot steps in under 3 minutes.
+[ ] Verify testing tools pass smoke tests across all processing modes.
+[ ] Review user guides to ensure deployment instructions are understandable for external reviews.
+[ ] Complete architectural documentation records capturing design justifications and trade-offs.
+[ ] Document code dependencies and project dataset profiles.
+[ ] Confirm that verification tasks pass cleanly across main branch tracks.
+[ ] Compile the repository codebase and apply active production tags.
+[ ] Record high-impact summary presentations explaining project execution loops.
+[ ] Link showcase material headers to summary assets across communication repositories.
+[ ] Draft project introductory posts for distribution across developer tracking platforms.
+Week 7-8 — Paper Trading Engine (Phase 2 Upgrade)
+[ ] Implement trading.py: abstract strategy layout interface + signal tracking logic.
+[ ] Implement ThresholdStrategy: generate transactions when classification weights cross the 0.75 mark.
+[ ] Implement an execution cooling guard to prevent duplicate transactional entries.
+[ ] Implement fixed capital allocation metrics assigning 5% per transaction event.
+[ ] Integrate market pricing pipelines with short data caching layers.
+[ ] Implement database.py: transactions ledger persistence and extraction aggregates.
+[ ] Implement backend summary endpoints returning transactional performance history metrics.
+[ ] Wire transaction triggers inside the core worker loop immediately following inference stages.
+[ ] Broadcast transaction entries to transport pipelines immediately after completing table changes.
+[ ] Implement Portfolio.jsx: render transactional value tracking lines and asset tables.
+[ ] Wire strategy configuration dropdowns onto presentation dashboards.
+[ ] Apply feature version tags across the main codebase.
+Week 10 — Production Hardening (Phase 2 Upgrade)
+[ ] Configure load testing tasks to push high data volume blocks across local targets.
+[ ] Execute load runs to confirm that queues process elements without dropping payloads.
+[ ] Confirm browser tracking scripts achieve full coverage goals across integration checks.
+[ ] Map data channels cleanly across cloud environments using encrypted paths.
+[ ] Verify remote storage clusters manage entries cleanly according to schema parameters.
+[ ] Deploy backend components across web node networks; connect frontend layouts to production origins.
+[ ] Map threshold alarm flags inside monitoring channels to track drop parameters.
+[ ] Append environment descriptions to user documentation guides.
+[ ] Document full version histories across system logs.
+[ ] Publish project summaries across targeted technical communication boards.
+[ ] Submit project portfolio frameworks to developer index platforms.
+[ ] Configure project metadata indicators to highlight MLOps, streaming systems, and data pipelines.
+15. Appendix: Hour Estimates Summary
+Task Focus / Milestone
+Estimated Hours
+Pipeline Phase Target
+Cumulative Total Hours
+Epic 1: ML Pipeline
+16–22 hrs
+MVP Scope (Week 1)
+16–22 hrs
+Epic 2: Infrastructure & DevOps
+12–16 hrs
+MVP Scope (Week 2)
+28–38 hrs
+Epic 3: Data Ingestion
+10–14 hrs
+MVP Scope (Week 3)
+38–52 hrs
+Epic 4: ML Inference & Drift
+14–18 hrs
+MVP Scope (Week 3-4)
+52–70 hrs
+Epic 5: Database Layer
+8–10 hrs
+MVP Scope (Week 2-4)
+60–80 hrs
+Epic 6: FastAPI Backend
+12–15 hrs
+MVP Scope (Week 4)
+72–95 hrs
+Epic 7: React Frontend
+20–26 hrs
+MVP Scope (Week 5)
+92–121 hrs
+Epic 8: Testing
+10–14 hrs
+MVP Scope (Week 3-6)
+102–135 hrs
+Documentation + Loom + Polish
+15–20 hrs
+MVP Scope (Week 6)
+117–155 hrs
+MVP Total Milestone (Shippable)
+~140 hrs
+Weeks 1–6 Complete
+—
+Epic 9: Paper Trading Engine
+18–24 hrs
+Phase 2 Scope (Week 7-8)
+158–179 hrs
+Cloud Deploy, Grafana, E2E, Load
+20–25 hrs
+Phase 2 Scope (Week 9-10)
+178–204 hrs
+TOTAL ESTIMATED BUILD DURATION
+~240–280 hrs
+Full 10-Week Project
+—
+Planning Notes: Allocating 25 hours per week across off-hours timelines delivers the complete MVP baseline within 6 weeks. System hardening, load testing, and portfolio logic loops complete by Week 10. Incorporate a 20% scheduling buffer to accommodate environment debugging. Optimization passes can run in the background while scaffolding infrastructure to maximize efficiency.

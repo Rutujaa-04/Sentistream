@@ -1,0 +1,979 @@
+Here is the readable, fully parsed markdown version of the SentiStream Technical Requirements Document (TRD). This matches the exact structure, data, and architectural details contained in your automation script.
+SENTISTREAM
+Real-Time Sentiment Analytics & Quantitative Paper Trading Engine
+TECHNICAL REQUIREMENTS DOCUMENT
+Staff Engineer · Solutions Architect · Tech Lead Edition
+Version: v1.0 – Engineering Draft
+Date: June 2025
+Author: Rutuja — Staff Engineer & Solutions Architect
+Constraint: 100% Free-Tier Stack — Zero Paid Infrastructure
+Scale Target: 100 headlines/min, single-node, demo-stable
+Status: Draft — Ready for Implementation
+SCOPE: This TRD covers the complete engineering specification for SentiStream. All infrastructure choices are constrained to free tiers. Design decisions are optimized simultaneously for technical correctness, interview storytelling depth, and zero-cost operability.
+1. Technical Overview
+1.1 System Purpose
+SentiStream is a production-grade, event-driven MLOps pipeline that ingests live financial news headlines, runs quantized FinBERT NLP inference, detects statistical model drift, and delivers real-time observability via a WebSocket-powered React dashboard — all on 100% free-tier infrastructure.
+1.2 Core Functionality
+Capability
+Description
+Real-Time Ingestion
+Finnhub REST API + RSS fallback; deduplication via SHA-256 hash; Redis Streams producer
+NLP Inference
+Fine-tuned FinBERT → ONNX Runtime INT8 quantized; p99 < 50ms on CPU
+Statistical Drift Detection
+Rolling Z-score on sentiment distribution; configurable threshold; DriftAlert persistence
+Message Queue Layer
+Redis Streams with consumer groups; Dead Letter Queue; at-least-once delivery
+Observability Storage
+ClickHouse for columnar telemetry (inference latency, headlines, drift_alerts)
+Real-Time Dashboard
+React 18 + Vite; WebSocket push; p50/p95/p99 latency charts; Z-score timeline
+Paper Trading Engine
+Sentiment → signal → simulated P&L; modular signal strategy interface
+1.3 Engineering Goals
+End-to-end pipeline latency < 500ms (ingestion → dashboard update)
+ONNX inference p99 < 50ms on commodity CPU (no GPU required)
+Zero message loss — all failures routed to DLQ with full audit trail
+Single docker-compose up brings full stack live in < 3 minutes
+Every component independently testable and replaceable (hexagonal architecture)
+100% free-tier: Upstash Redis, ClickHouse Cloud free tier, Finnhub free tier, Render/Railway for optional cloud
+1.4 Key Technical Challenges
+Challenge
+Engineering Response
+Cold-start latency on free-tier cloud
+/ping warmup endpoint; ONNX session pre-loaded at boot; Redis connection pooled at startup
+ONNX quantization accuracy loss
+INT8 quantization profiled against FP32 baseline; fallback to FP32 if F1 delta > 2%
+Redis free-tier memory ceiling (256MB)
+TTL policies on all stream entries; consumer ACK + XDEL pipeline; DLQ size-bounded
+Finnhub rate limit (60 req/min)
+Token-bucket rate limiter in ingestor; RSS fallback activates on 429 response
+ClickHouse free-tier row limits
+TTL-based data expiry (7-day rolling); materialized views for pre-aggregated percentiles
+WebSocket fan-out at scale
+FastAPI async broadcast; connection registry with weak references; auto-reconnect on client
+2. System Architecture
+2.1 High-Level Architecture
+Architecture Style: Event-Driven Pipeline with Decoupled Components. Each stage communicates via Redis Streams (async) or WebSocket (push). No component is coupled to another's implementation — only to the message contract.
+
+2.2 Component Descriptions
+Component
+Technology
+Why It Exists
+ingestor.py
+Python asyncio
+Decoupled data ingestion. Owns rate-limiting, deduplication, and source failover logic. Publishes to Redis — never writes to DB directly.
+Redis Streams
+Upstash Redis Free
+Durable async message channel. Consumer groups provide at-least-once delivery and allow parallel workers without code changes.
+worker.py
+Python asyncio
+Consumer group manager. Orchestrates inference → drift detection → DB write → WebSocket broadcast. Routes failures to DLQ.
+model.py
+ONNX Runtime
+Fully decoupled inference engine. Stateless — can be replaced with any ONNX-compatible model without touching worker logic.
+drift.py
+Python / numpy
+Stateful Z-score calculator. Maintains rolling window in memory. Separated from worker for testability and single responsibility.
+database.py
+clickhouse-driver
+ClickHouse abstraction layer. All SQL lives here. Exposes typed insert/query methods — no raw SQL in workers.
+main.py (FastAPI)
+FastAPI + uvicorn
+API gateway. Owns WebSocket broadcast registry, health checks, warmup, and REST endpoints for dashboard queries.
+React Dashboard
+React 18 + Vite
+Real-time visualization layer. Connects via WebSocket for push events; queries FastAPI REST for historical aggregations.
+ClickHouse Cloud
+ClickHouse (free tier)
+Columnar OLAP store. p99 latency percentile queries execute in < 5ms with no index tuning — native to its engine.
+2.3 Data Flow — Headline Lifecycle
+3. Architecture Decisions (ADRs)
+ADR-001: Redis Streams vs. Apache Kafka
+Decision: Redis Streams with consumer groups (Upstash free tier)
+Alternatives Considered: Apache Kafka (Confluent Cloud free tier) | RabbitMQ | In-process asyncio queue
+Trade-offs: Redis: 256MB memory cap on free tier; no compaction; no infinite retention. Kafka: full partition replication semantics, better at scale, but Zookeeper/KRaft adds 2+ services; Confluent free tier has cluster restrictions. RabbitMQ: no native consumer group replay.
+Final Reasoning: Consumer group semantics (at-least-once, parallel workers, XPENDING for lag monitoring) are functionally identical to Kafka for this throughput. Upstash Redis is serverless with a generous free tier and zero ops overhead. Kafka would add 300+ lines of config for no functional gain at this scale. Upgrade path to Kafka documented in ARCHITECTURE.md.
+ADR-002: ONNX Runtime vs. TorchServe vs. Triton Inference Server
+Decision: ONNX Runtime 1.17 with INT8 dynamic quantization
+Alternatives Considered: TorchServe | Triton Inference Server | vLLM | Direct PyTorch (torch.inference_mode)
+Trade-offs: ONNX Runtime: CPU-optimized, no GPU needed, portable, INT8 quantization supported. TorchServe: requires JVM, complex model-store configuration, GPU-optimized. Triton: GPU-first, multi-model serving overkill for single model. Direct PyTorch: 3-4x slower than quantized ONNX on CPU.
+Final Reasoning: FinBERT served via ONNX Runtime achieves p99 < 50ms on CPU (vs ~180ms unquantized PyTorch). INT8 dynamic quantization provides ~3.5x speedup with < 1% F1 degradation on Financial PhraseBank. Framework-agnostic: switching from PyTorch to JAX or a different base model requires only re-exporting ONNX — the serving layer is unchanged. Triton is the correct choice at scale with GPU; documented as Phase 3 upgrade.
+ADR-003: ClickHouse vs. PostgreSQL + TimescaleDB vs. InfluxDB
+Decision: ClickHouse (ClickHouse Cloud free tier, Docker for local)
+Alternatives Considered: PostgreSQL + TimescaleDB extension | InfluxDB Cloud free tier | DuckDB (embedded)
+Trade-offs: ClickHouse: columnar OLAP, sub-ms aggregation, native p-quantile functions. PostgreSQL/TimescaleDB: row-oriented, needs query tuning for percentile aggregations at volume, TimescaleDB extension adds ops complexity. InfluxDB: time-series native but limited SQL, small free tier. DuckDB: zero-ops embedded OLAP but no concurrent writers.
+Final Reasoning: quantile(0.99)(latency_ms) executing over 100k rows returns in < 5ms natively in ClickHouse with no indexing. This is the interview story: "I chose ClickHouse because p99 latency computation is a native columnar scan — not a sort operation." Dashboard percentile charts query live data, not cached aggregations. Upgrade path: self-hosted ClickHouse on Railway free tier, then dedicated cluster.
+ADR-004: FastAPI vs. Django REST Framework vs. Flask vs. Express.js
+Decision: FastAPI (Python 3.11, uvicorn, async-first)
+Alternatives Considered: Django REST Framework | Flask + flask-socketio | Express.js + socket.io
+Trade-offs: FastAPI: async/await native, WebSocket support built-in, automatic OpenAPI docs, Pydantic validation. Django REST: sync-first, heavyweight for a real-time pipeline API, ORM not needed. Flask: manual WebSocket via flask-socketio, no async, no validation. Express.js: requires Node.js runtime separate from Python ML stack.
+Final Reasoning: FastAPI's async WebSocket handler allows concurrent client connections without threading overhead. Pydantic models document the API contract for interviewers. Auto-generated OpenAPI at /docs serves as living documentation. Critical for portfolio: FastAPI is the dominant Python API framework in ML/MLOps roles — direct signal to interviewers.
+ADR-005: Monolith vs. Service-Per-Component vs. Serverless Functions
+Decision: Modular monolith with logical boundaries (single Python process, importable modules)
+Alternatives Considered: Microservices (separate Docker containers per component) | Serverless (AWS Lambda free tier) | Celery workers
+Trade-offs: Microservices: true isolation, independent scaling, but 5+ Docker containers for a single-dev portfolio project is operationally excessive and complicates docker-compose demo reliability. Serverless: cold start latency incompatible with < 500ms SLA; AWS Lambda free tier has 1M invocation limit. Celery: adds Redis+broker coupling, overkill for 100 headlines/min.
+Final Reasoning: The modular monolith is the correct trade-off: ingestor.py, worker.py, model.py, drift.py, database.py are logically separated with clean interfaces — they could be extracted to microservices without changing business logic. This architecture demonstrates separation of concerns and hexagonal design to interviewers, while maintaining a single docker-compose up demo experience.
+ADR-006: React 18 vs. Next.js vs. Vue 3 vs. Svelte
+Decision: React 18 with Vite, Recharts, native WebSocket API
+Alternatives Considered: Next.js (SSR overkill for dashboard) | Vue 3 | Svelte | Angular
+Trade-offs: Next.js: SSR adds complexity for a real-time SPA — no SEO requirement for a dashboard. Vue 3/Svelte: smaller community signal for ML engineering roles. React: dominant in fintech dashboards (Bloomberg Terminal UI, Robinhood, Coinbase all React-based).
+Final Reasoning: React 18 with concurrent features is the highest interview-signal choice for a fintech dashboard. Recharts is React-native for financial visualization. Vite provides sub-second HMR. The native WebSocket API (no socket.io dependency) demonstrates direct protocol knowledge — interviewers can ask "how does your WebSocket reconnect?" and receive a concrete implementation answer.
+ADR-007: Upstash Redis vs. Local Redis vs. Railway Redis vs. Render Redis
+Decision: Local Redis (Primary) / Upstash Redis (Cloud fallback)
+Alternatives Considered: Local Redis in Docker | Railway Redis (500MB free) | Render Redis (90-day trial) | Redis Cloud free tier
+Trade-offs: Upstash: HTTP-based serverless Redis, 10k commands/day free, global replication, zero ops. Local Docker: zero latency but not cloud-demonstrable. Railway/Render: more storage but 90-day trial expiry or paid after threshold.
+Final Reasoning: For demo purposes: local Docker Redis (zero latency, unlimited operations) is PRIMARY. Upstash is documented as the cloud upgrade path — same Redis Streams API, demonstrating cloud-native Redis knowledge without incurring cost. Both environments use identical connection strings via .env — switching requires only changing REDIS_URL.
+4. Technology Stack
+4.1 Full Stack Specification
+Layer
+Technology
+Version / Tier
+Reason
+Frontend
+React
+18.3 + Vite 5
+Concurrent mode, dominant fintech UI framework
+
+Recharts
+2.12
+React-native, D3-backed financial charts
+
+Tailwind CSS
+3.4
+Utility-first, zero-config purge for production
+
+Zustand
+4.5
+Lightweight global state; no Redux overhead
+
+Native WebSocket API
+Browser built-in
+Direct protocol — no socket.io abstraction layer
+Backend
+FastAPI
+0.111 + Python 3.11
+Async-native, OpenAPI docs, Pydantic validation
+
+uvicorn
+0.29 (lifespan)
+ASGI server; lifespan events for startup warmup
+
+Pydantic v2
+2.7
+Schema validation, auto-serialization, 5x v1 perf
+
+asyncio + aiohttp
+stdlib + 3.9
+Non-blocking HTTP for Finnhub polling
+ML / AI
+ONNX Runtime
+1.17 (CPU)
+Framework-agnostic inference; INT8 quantization
+
+HuggingFace Transformers
+4.40
+FinBERT tokenizer + fine-tuning pipeline
+
+PyTorch
+2.3 (train-only)
+Training only — not in inference hot path
+
+optimum (HF)
+1.19
+ONNX export + INT8 quantization orchestration
+
+numpy / scipy
+1.26 / 1.13
+Z-score computation in drift.py
+Storage
+ClickHouse Cloud
+Free tier (1M rows)
+Columnar OLAP; native quantile aggregations
+
+clickhouse-driver
+0.2.9
+Python async ClickHouse client
+
+Redis (Docker)
+7.2 Alpine
+Streams + consumer groups + DLQ
+
+Upstash Redis
+Free (10k req/day)
+Cloud fallback / production demo path
+DevOps
+Docker + Compose
+24.x + Compose v2
+Single-command reproducible environment
+
+GitHub Actions
+Free (2000 min/mo)
+CI: lint, test, ONNX benchmark regression
+
+Ruff
+0.4
+10-100x faster than flake8, replaces isort too
+
+pytest + pytest-asyncio
+8.x + 0.23
+Async-aware test runner for FastAPI + workers
+
+Locust
+2.28 (free)
+Load testing — demonstrates pipeline saturation point
+Observability
+structlog
+24.x
+Structured JSON logging — grep-able in production
+
+prometheus-client
+0.20
+/metrics endpoint; scrape-compatible with Grafana
+
+Grafana Cloud
+Free (10k series)
+Dashboard for CI metrics; Prometheus scraping
+5. Detailed Module Breakdown
+Module 1: ingestor.py — News Ingestion
+Purpose: Primary data ingestion loop. Owns all external API interaction.
+Responsibilities: Poll Finnhub /news every 60s; apply token-bucket rate limiter (60 req/min); deduplicate via Redis SET SETNX; fallback to RSS on 429/5xx; publish to raw_headlines Redis Stream; log all source events with structlog.
+Dependencies: aiohttp (HTTP), redis.asyncio (stream XADD, SET SETNX), feedparser (RSS), config.py (FINNHUB_API_KEY, POLL_INTERVAL)
+Inputs: Finnhub API response: [{headline, ticker, datetime, source}]; RSS feed XML
+Outputs: Redis Stream message: {id: SHA256_hash, ticker, headline_text, source, ingested_at_unix}
+Error Handling: HTTPError → activate_rss_fallback(); JSONDecodeError → log + skip; Redis connection lost → retry 3x exponential backoff; all errors emit Prometheus counter ingestor_errors_total
+Key Design: Deduplication SET key: sentistream:seen:{sha256_hash}, TTL: 24h. This prevents reprocessing without unbounded memory growth.
+Module 2: worker.py — Consumer Group Manager
+Purpose: Redis Stream consumer group manager. Orchestrates inference pipeline per message.
+Responsibilities: XREADGROUP loop; deserialize message; call model.infer(); call drift.update(); write to ClickHouse; XACK on success; XADD to DLQ + XACK on failure; broadcast to FastAPI via internal asyncio Queue.
+Dependencies: model.py (inference), drift.py (Z-score), database.py (CH writes), redis.asyncio, config.py
+Inputs: Redis Stream message from raw_headlines group sentistream_workers
+Outputs: ClickHouse writes; asyncio broadcast queue entry; DLQ entry on error
+Consumer Group Config: Group: sentistream_workers, Consumer: worker_{PID}, BLOCK: 1000ms, COUNT: 10 (batch reads)
+Retry Policy: No in-worker retry — fail fast to DLQ. Retries are an operational decision, not a code decision. XPENDING exposes stuck messages.
+Module 3: model.py — ONNX Inference Engine
+Purpose: Stateless, decoupled ML inference. No I/O, no state — pure function over text.
+Responsibilities: Load ONNX model at startup (singleton); tokenize input (HF AutoTokenizer); run InferenceSession; return typed InferenceResult dataclass; record latency_ms.
+Dependencies: onnxruntime (InferenceSession), transformers (AutoTokenizer), numpy
+Inputs: headline_text: str (max 512 chars; truncated if longer)
+Outputs: InferenceResult(label: Literal["positive","negative","neutral"], confidence: float, latency_ms: float)
+Quantization: INT8 dynamic quantization via optimum.onnxruntime.ORTQuantizer. Profiled against FP32 baseline: ~3.5x speedup, < 0.8% F1 delta on Financial PhraseBank test set.
+Fallback: If ONNX session load fails at startup: log CRITICAL + sys.exit(1). No silent degradation — a broken model is a hard failure.
+Module 4: drift.py — Statistical Drift Detector
+Purpose: Stateful Z-score drift detection on rolling sentiment distribution.
+Responsibilities: Maintain deque of sentiment scores (maxlen = DRIFT_WINDOW_SIZE, default 100); compute rolling mean + std; compute Z-score of latest score; return DriftSignal if $|Z| > \text{DRIFT\_ALERT\_Z\_THRESHOLD}$ (default 2.0).
+Dependencies: collections.deque, numpy, config.py (DRIFT_WINDOW_SIZE, DRIFT_ALERT_Z_THRESHOLD)
+Inputs: confidence_score: float, ticker: str
+Outputs: Optional[DriftSignal(z_score, direction, window_mean, window_std, triggered_threshold)]
+Guard: Suppress alerts if deque length < 30 (insufficient baseline). Configurable via DRIFT_MIN_SAMPLES.
+Thread Safety: drift.py is instantiated per-worker. No shared state. Per-ticker drift tracking requires DriftDetector registry in worker.py.
+Module 5: database.py — ClickHouse Abstraction
+Purpose: Typed ClickHouse client. All SQL is here — no raw queries in workers or API.
+Responsibilities: Connection pooling; typed insert methods per table; query methods for /metrics and /analytics endpoints; schema migration on startup.
+Key Methods: insert_headline(HeadlineRecord); insert_telemetry(TelemetryRecord); insert_drift_alert(DriftAlert); query_latency_percentiles(window: str) → PercentileResult; query_sentiment_trends(ticker, hours) → list[SentimentBucket]
+ClickHouse Config: ENGINE: MergeTree() ORDER BY (ticker, processed_at); TTL: processed_at + INTERVAL 7 DAY; Compression: LZ4
+Materialized Views: mv_latency_percentiles: pre-aggregates quantile(0.5,0.95,0.99)(latency_ms) per 1-minute bucket. Dashboard queries this view — not the raw table.
+Module 6: main.py — FastAPI Application
+Purpose: API gateway, WebSocket hub, health orchestrator.
+Responsibilities: WebSocket connection registry; broadcast loop from internal asyncio Queue; /ping warmup (SELECT 1 on CH + Redis PING); /health (component status); /metrics (Prometheus format); REST endpoints for dashboard historical queries.
+WebSocket Pattern: asyncio.Queue as bridge between worker.py and WebSocket broadcast. Workers enqueue; broadcast coroutine dequeues and fans out to all connected clients. Dead connections removed on write failure.
+Lifespan: FastAPI lifespan context manager: startup → load ONNX model + warm CH/Redis + create consumer group + start ingestor task + start worker task. Shutdown → graceful flush.
+Module 7: Paper Trading Engine (trading.py)
+Purpose: Converts sentiment signals into simulated buy/sell/hold decisions with P&L tracking.
+Signal Strategy: Strategy interface: BaseStrategy.generate_signal(inference_result) → TradeSignal. Default: ThresholdStrategy (buy if positive + confidence > 0.75, sell if negative + confidence > 0.75, else hold).
+Position Sizing: Fixed-fraction: 5% of simulated portfolio per signal. Kelly Criterion documented as Phase 2 upgrade.
+P&L Tracking: Simulated portfolio state in ClickHouse paper_trades table. Unrealized P&L calculated against mock price feed (Finnhub free /quote endpoint).
+Extensibility: New strategies implement BaseStrategy.generate_signal(). Strategy registry in config.py: TRADING_STRATEGY = "threshold" | "mean_reversion" | "momentum".
+6. Database Design
+6.1 ClickHouse Schema
+Design principle: All tables use MergeTree engine ordered by (ticker, timestamp). TTL of 7 days prevents free-tier row exhaustion. Materialized views pre-aggregate expensive percentile queries so dashboard REST endpoints hit sub-ms latency.
+Table: headlines — DDL
+
+
+Table: inference_telemetry — DDL + Materialized View
+Table: drift_alerts — DDL
+Table: paper_trades — DDL
+6.2 Redis Key Schema
+Key Pattern
+Type
+Purpose & TTL
+sentistream:seen:{sha256}
+String (SETNX)
+Deduplication flag. TTL: 86400s (24h). Prevents reprocessing same headline within 24h window.
+raw_headlines
+Stream (XADD)
+Primary ingestion stream. MAXLEN ~1000 (approximate, memory-bounded). Consumer group: sentistream_workers.
+dlq_headlines
+Stream (XADD)
+Dead Letter Queue. MAXLEN ~500. No consumer group — manual inspection via XRANGE.
+sentistream:metrics:{worker_id}
+Hash
+Per-worker counters: processed, errors, dlq_sent. TTL: 3600s.
+sentistream:ws:clients
+Set
+WebSocket client IDs for fan-out tracking. No TTL — managed by FastAPI connection lifecycle.
+7. API Design
+7.1 REST Endpoints
+Design principle: All REST endpoints are read-only — they query ClickHouse materialized views. Write operations happen exclusively through the internal Redis Streams pipeline. Auth: None for v1 (portfolio project, no user data). CORS: localhost:5173 in dev.
+GET /ping — Connection Warmup
+Description: Connection warmup endpoint. Executes SELECT 1 on ClickHouse + Redis PING. Call before demo to prevent cold-start latency.
+Auth: None
+Request: None
+Response:JSON{"status":"ok","clickhouse":"warm","redis":"warm","onnx_model":"loaded","latency_ms":23}
+
+
+
+* **Errors:** `503 Service Unavailable: {"status":"degraded","component":"clickhouse","error":"..."}`#### `GET /health` — Health Verification* **Description:** Component health status. Returns per-component status with consumer group lag.* **Auth:** None* **Request:** None* **Response:**  ```json  {"status":"healthy","components":{"redis":{"status":"ok","stream_length":42,"dlq_length":0},"clickhouse":{"status":"ok","rows_7d":8420},"onnx":{"status":"ok","model":"finbert-int8"},"consumer_group":{"pending":0,"lag":0}}}
+Errors: 503: one or more components degraded
+GET /metrics — Telemetry Exposition
+Description: Prometheus-format metrics endpoint. Scraped by Grafana Cloud or local Prometheus.
+Auth: None
+Request: None
+Response: Text/plain Prometheus exposition format: ingestor_headlines_ingested_total, worker_inferences_total, worker_dlq_total, inference_latency_seconds (histogram)
+Errors: N/A
+GET /api/v1/latency-percentiles — Performance Monitoring
+Description: Query ClickHouse mv_latency_percentiles materialized view for p50/p95/p99 over time window.
+Auth: None
+Request: Query: ?window=1h|6h|24h (default 1h)
+Response:JSON{"window":"1h","data":[{"bucket":"2025-06-01T10:00:00Z","p50_ms":22.1,"p95_ms":38.4,"p99_ms":47.2,"samples":142},...]}
+
+
+
+* **Errors:** `400: invalid window param; 503: ClickHouse unavailable`#### `GET /api/v1/sentiment-trends` — Analytics Retrieval* **Description:** Returns sentiment distribution over time, optionally filtered by ticker.* **Auth:** None* **Request:** Query: `?ticker=AAPL&hours=6`* **Response:**  ```json  {"ticker":"AAPL","hours":6,"data":[{"bucket":"2025-06-01T10:00:00Z","positive":12,"negative":3,"neutral":8,"dominant":"positive"},...]}
+Errors: 400: unknown ticker; 503: ClickHouse unavailable
+GET /api/v1/drift-alerts — Drift Monitoring
+Description: Returns recent drift alerts from ClickHouse drift_alerts table.
+Auth: None
+Request: Query: ?ticker=TSLA&limit=50
+Response:JSON{"alerts":[{"alert_id":"uuid","ticker":"TSLA","z_score":2.34,"direction":"bullish_spike","alerted_at":"2025-06-01T10:05:00Z","triggered_threshold":2.0},...]}
+
+
+
+* **Errors:** `503: ClickHouse unavailable`#### `GET /api/v1/portfolio` — Quantitative Tracking* **Description:** Returns simulated paper trading portfolio summary from `paper_trades` table.* **Auth:** None* **Request:** Query: `?strategy=threshold`* **Response:**  ```json  {"portfolio":{"total_trades":84,"total_pnl_usd":1240.50,"win_rate":0.62,"positions":[{"ticker":"AAPL","shares":10,"unrealized_pnl":82.4},...]},"strategy":"threshold"}
+Errors: 503: ClickHouse unavailable
+7.2 WebSocket Protocol
+WS /ws — Real-Time Event Stream
+
+
+
+JavaScript
+// Client → Server: subscribe (on connect)Client sends: {"type": "subscribe", "tickers": ["AAPL", "TSLA", "NVDA"]}// Empty tickers array = subscribe to all// Server → Client: sentiment event (per headline processed)Server sends: {  "type": "sentiment",  "data": {    "ticker": "AAPL",    "headline": "Apple beats Q3 earnings estimates by 12%",    "sentiment": "positive",    "confidence": 0.94,    "latency_ms": 28.4,    "source": "finnhub",    "processed_at": "2025-06-01T10:05:23.441Z"  }}// Server → Client: drift alert eventServer sends: {  "type": "drift_alert",  "data": {    "ticker": "TSLA",    "z_score": 2.71,    "direction": "bearish_spike",    "alerted_at": "2025-06-01T10:05:30.221Z"  }}// Server → Client: ping (every 30s)Server sends: {"type": "ping", "ts": 1717228800000}// Client responds: {"type": "pong", "ts": 1717228800000}// Client reconnection: exponential backoff starting 1s, max 30s
+8. Authentication & Authorization
+8.1 v1 Stance (Portfolio Project)
+SentiStream v1 has NO authentication. The system processes public financial news, stores no PII, and is designed for single-user local demo use. This is an explicit, documented architectural decision — not an oversight.
+The absence of auth in v1 is interview-defensible: "I made the conscious decision to exclude auth for v1 because it adds complexity without enabling any portfolio value. The system handles no user data and no private financial data. Auth would be Phase 2 if SentiStream were productized."
+8.2 Phase 2 Auth Design (Documented for Interview)
+Component
+Design
+JWT Strategy
+Short-lived access tokens (15min) + long-lived refresh tokens (7 days, stored in httpOnly cookie). Signing: HS256 with SECRET_KEY from .env. Library: python-jose.
+OAuth Providers
+GitHub OAuth2 (for open-source contributor login). python-social-auth or authlib.
+RBAC Roles
+viewer (read-only dashboard), analyst (drift config changes), admin (trading engine controls). Role stored in JWT claims.
+API Key Auth
+For machine-to-machine (e.g., CI pipeline calling /metrics). API keys stored hashed in ClickHouse users table. X-API-Key header.
+Rate Limiting
+slowapi (Starlette-native rate limiter). 100 req/min per IP for REST; 10 concurrent WebSocket connections per IP.
+Secrets Management
+All secrets in .env. GitHub Actions secrets for CI. Phase 3: HashiCorp Vault free tier or AWS Secrets Manager (if cloud deployment).
+8.3 Security Hardening (Applied in v1)
+CORS: Origins restricted to [localhost:5173] in dev — not wildcard. Configurable via ALLOWED_ORIGINS env var.
+Secrets: .env in .gitignore; .env.example with all keys empty; pre-commit hook blocks committed secrets (detect-secrets).
+Input Validation: All API inputs validated via Pydantic v2 models — no raw dict access.
+SQL Injection: Not applicable (ClickHouse driver uses parameterized queries; no string interpolation in SQL).
+Dependency Scanning: GitHub Actions runs pip-audit and npm audit on every PR.
+Docker: Non-root user in all Dockerfiles (USER 1001).
+9. AI/ML Architecture
+9.1 ML Pipeline — Training
+
+Plaintext
+TRAINING PIPELINE (ml_pipeline/)1. DATA PREPARATION (ml_pipeline/data/)   Dataset: Financial PhraseBank (Malo et al., 2014)   Classes: positive (2,879) | neutral (1,363) | negative (604)   Split: 80/10/10 train/val/test stratified by class   Note: Class imbalance → use WeightedRandomSampler in DataLoader2. FINE-TUNING (ml_pipeline/train.py)   Base model: ProsusAI/finbert (HuggingFace)   Framework: PyTorch 2.3 + HuggingFace Trainer   Epochs: 5 | Batch size: 16 | LR: 2e-5 | Weight decay: 0.01   Optimizer: AdamW + linear warmup schedule (10% steps)   Loss: CrossEntropyLoss with class weights [1.0, 2.1, 4.8]   Target: weighted F1 >= 0.88 on test set3. EVALUATION (ml_pipeline/evaluate.py)   Metrics: per-class F1, weighted F1, confusion matrix   Output: ml_pipeline/results/benchmark.json   Confusion matrix: ml_pipeline/results/confusion_matrix.png4. ONNX EXPORT (ml_pipeline/export_onnx.py)   Step 1: Export to FP32 ONNX via optimum.exporters.onnx   Step 2: INT8 dynamic quantization via ORTQuantizer   Step 3: Benchmark FP32 vs INT8: latency + F1 delta   Step 4: Validate INT8 F1 delta < 2% — reject if exceeded   Output: models/finbert-int8.onnx (committed to repo <= 100MB)
+9.2 Inference Architecture
+Stage
+Implementation Detail
+Session Loading
+onnxruntime.InferenceSession loaded once at application startup inside FastAPI lifespan. Stored as module-level singleton. Avoids per-request model loading overhead.
+Tokenization
+AutoTokenizer.from_pretrained("ProsusAI/finbert"); max_length=128 (tweets/headlines, not documents); padding=True; truncation=True. Tokenizer cached locally — no HuggingFace Hub call at runtime.
+Inference Call
+session.run(None, {"input_ids": ids, "attention_mask": mask, "token_type_ids": types}). Output: logits shape [1, 3]. softmax → [pos_prob, neg_prob, neu_prob].
+Label Mapping
+{0: "positive", 1: "negative", 2: "neutral"} — matches ProsusAI/finbert label ordering. argmax of softmax = predicted label.
+Latency Budget
+Tokenization: ~3ms | ONNX session run: ~20ms | Post-processing: ~0.5ms | Total: ~24ms mean, ~47ms p99 (measured on Apple M2, expected ~42ms mean on commodity x86)
+Non-English Text
+Detected via langdetect. If not English: label="undefined", confidence=0.0. Routed to separate CH table non_english_headlines.
+9.3 Drift Detection Algorithm
+
+Python
+class DriftDetector:    def __init__(self, window_size=100, z_threshold=2.0, min_samples=30):        self.window = deque(maxlen=window_size)        self.z_threshold = z_threshold        self.min_samples = min_samples    def update(self, score: float, ticker: str) -> Optional[DriftSignal]:        self.window.append(score)        if len(self.window) < self.min_samples:            return None  -- Insufficient baseline        arr = np.array(self.window)        mean, std = arr.mean(), arr.std()        if std < 1e-10:  -- Degenerate case: all same score            return None        z = (score - mean) / std        if abs(z) > self.z_threshold:            return DriftSignal(                ticker=ticker,                z_score=round(z, 4),                direction="bullish_spike" if z > 0 else "bearish_spike",                window_mean=round(mean, 4),                window_std=round(std, 4),                triggered_threshold=self.z_threshold,            )        return None# Interview talking point:# Z-score of 2.0 = 95th percentile under normal distribution.# A Z > 2.0 means the current sentiment score is 2 standard deviations# above the rolling 100-headline mean — statistically unusual, not noise.
+9.4 ML Evaluation Framework
+Metric
+Target & Rationale
+Weighted F1 Score
+>= 0.88. Weighted accounts for class imbalance (positive: 2879, neutral: 1363, negative: 604). Macro F1 would penalize majority class.
+Per-class F1
+Negative class F1 >= 0.80 (hardest class). Negative headlines are most impactful for trading signals — false negatives are costly.
+Inference Latency (p99)
+< 50ms on CPU (no GPU). Benchmarked in GitHub Actions CI: if p99 regresses > 5ms from baseline, PR is blocked.
+Quantization F1 Delta
+< 2% degradation from FP32 baseline. If delta exceeds threshold: reject INT8 — serve FP32 with latency trade-off accepted.
+Drift Detection TPR
+>= 95% on seed_test_data.py synthetic drift injection. Measured by comparing DriftAlert timestamps to known injection timestamps.
+9.5 Latency & Cost Estimates
+Component
+Latency
+Free-Tier Cost
+Finnhub API
+~100ms avg
+Free (60 req/min). No cost.
+Redis XADD/XREADGROUP
+< 2ms (local Docker)
+Free (local). Upstash: 10k req/day free.
+ONNX INT8 Inference
+~24ms mean, ~47ms p99
+Free (CPU only, no GPU API call).
+ClickHouse Write
+< 5ms (async insert)
+Free tier: 1M rows, 10GB storage, 1 replica.
+ClickHouse Percentile Query
+< 5ms (materialized view)
+Included in free tier.
+WebSocket Broadcast
+< 1ms (asyncio in-process)
+Free (in-process, no network hop).
+TOTAL end-to-end
+~135ms mean, ~450ms p99
+$0.00/month (all free tier).
+10. Data Flow (Sequence Diagrams)
+10.1 Happy Path: Headline → Dashboard
+
+10.2 Failure Path: DLQ Routing
+
+11. Background Jobs & Queues
+Job
+Mechanism
+Schedule
+Behavior
+Headline Ingestion
+asyncio Task (lifespan)
+Every 60s (configurable)
+Runs as permanent asyncio coroutine alongside FastAPI. POLL_INTERVAL configurable via config.py.
+Consumer Worker
+asyncio Task (lifespan)
+Continuous (BLOCK 1000ms)
+XREADGROUP blocks on empty stream. Processes batch of COUNT=10 before next read.
+Warmup Ping
+uvicorn lifespan on_startup
+Once at startup
+GET /ping called internally at startup. Blocks server start until warm.
+DLQ Monitor
+asyncio Task
+Every 300s
+Queries XLEN dlq_headlines. If $> 10$ entries: logs WARNING + increments Prometheus gauge dlq_depth.
+CH TTL Enforcement
+ClickHouse native
+Background (CH-managed)
+ClickHouse automatically expires rows older than 7 days. No application code needed.
+Redis MAXLEN Trim
+XADD MAXLEN ~ 1000
+On every XADD
+Approximate trimming to 1000 entries prevents memory overflow on free-tier Redis.
+11.1 Retry Policy
+Design decision: No in-worker retry loops. SentiStream follows the "fail fast to DLQ" pattern. A failed message is immediately moved to dlq_headlines and XACKed. This prevents worker starvation, avoids thundering herd on downstream failures, and produces a clean audit trail. DLQ replay is a manual operational action — not automated.
+12. Caching Strategy
+What Gets Cached
+Cache Layer
+TTL
+Rationale & Invalidation
+Seen headline hashes
+Redis SET (SETNX)
+86400s (24h)
+Prevents reprocessing. No explicit invalidation — TTL expiry. Key: sentistream:seen:{sha256}
+ONNX model session
+In-process singleton
+Process lifetime
+Model loaded once at startup. Never reloaded during runtime — restart required for model update.
+HF Tokenizer
+Local disk
+Permanent
+Downloaded once, cached locally. TRANSFORMERS_CACHE env var points to Docker volume.
+Latency percentiles
+ClickHouse MV
+Updated on write
+mv_latency_percentiles pre-aggregates per-minute buckets. Dashboard queries MV, not raw table.
+Prometheus metrics
+prometheus-client
+Scraped on demand
+Counters/histograms maintained in-process. No external cache needed.
+Finnhub API response (Phase 2)
+Redis STRING
+55s
+Phase 2: Cache last Finnhub response to handle brief network interruptions without triggering RSS fallback.
+12.1 Performance Impact
+Deduplication cache: Eliminates ~15-30% redundant processing (estimated, based on news aggregation patterns)
+Materialized view: Reduces dashboard query latency from ~50ms (raw table scan) to ~2ms (MV pre-aggregate)
+In-process ONNX singleton: Eliminates ~200ms session load time per request that would exist if sessions were per-request
+13. Scalability Design
+13.1 Horizontal Scaling Path
+Scalability Framework: SentiStream is designed to scale horizontally with zero code changes. The Redis consumer group pattern is the key: adding a second worker.py process automatically distributes message processing. The group name (sentistream_workers) is shared; each worker uses its own consumer name (worker_{PID}).
+Component
+Current (Single-Node)
+Scale-Out Path
+Ingestor
+1 asyncio task, 100 hdl/min
+Multiple ingestors with different ticker subsets. Redis SETNX dedup prevents double-processing.
+Worker / Inference
+1 asyncio task, ~2.5 hdl/s
+$N$ worker containers, same consumer group. Redis distributes automatically. ONNX is stateless.
+Redis Streams
+Single node, 256MB
+Upstash Redis (serverless, auto-scale). Or: self-hosted Redis Cluster (3+ nodes).
+ClickHouse
+Free tier (1 replica)
+ClickHouse Cloud dedicated cluster. Horizontal shard by ticker. Replication factor 2.
+FastAPI / WebSocket
+Single uvicorn process
+Behind NGINX upstream. WebSocket affinity via sticky sessions. OR: move broadcast to Redis Pub/Sub.
+Dashboard
+Static files, 1 Vite server
+CDN (Cloudflare free tier). Static assets served globally.
+13.2 Bottleneck Analysis
+Bottleneck
+Threshold
+Mitigation
+ONNX inference CPU
+~150 hdl/min (1 worker)
+Add worker containers. ONNX is stateless — $N \text{ workers} = N \times \text{throughput}$. No coordination needed.
+Redis free-tier memory (256MB)
+~8,000 stream entries
+MAXLEN ~1000 trim on every XADD. XDEL after ACK. TTL on seen:{hash} keys.
+ClickHouse free-tier row limit (1M)
+~83k rows/day at full speed
+7-day TTL auto-expires. At 100 hdl/min: ~144k rows/day — upgrade to paid tier after demo period.
+Finnhub rate limit (60 req/min)
+Current: 1 req/min (well under)
+Token bucket limiter. RSS fallback. Phase 2: Alpaca news API as secondary primary.
+WebSocket fan-out (many clients)
+~100 concurrent clients
+Move broadcast to Redis Pub/Sub. Each FastAPI instance subscribes — decouples broadcast from workers.
+14. Security Requirements
+14.1 Threat Model
+Threat Vector
+Severity
+Control
+Finnhub API key exposure
+High
+Key in .env (gitignored). CI secrets. Docker build args NOT used — passed as runtime env vars only.
+ClickHouse credential exposure
+High
+CH_PASSWORD in .env. ClickHouse Cloud IP allowlisting to known hosts.
+Redis unauthenticated access
+Medium
+Docker Redis: bind to 127.0.0.1, no external port. Upstash: TLS + token auth required.
+Malformed JSON from Finnhub
+Low
+Pydantic model parsing with strict mode. JSONDecodeError → log + skip. No exec() or eval().
+WebSocket flooding (DoS)
+Medium
+Phase 2: slowapi rate limiter on WS upgrade endpoint. Phase 1: connection count log warning.
+Dependency supply chain attack
+Medium
+pip-audit + npm audit in GitHub Actions. requirements.txt pinned to exact versions.
+ONNX model tampering
+Medium
+SHA-256 checksum of finbert-int8.onnx verified at startup. Startup fails on mismatch.
+14.2 Security Controls Checklist
+Secrets: .env in .gitignore + detect-secrets pre-commit hook blocks any key patterns
+Dependencies: pip-audit (Python) + npm audit (Node) run on every GitHub Actions CI push
+Docker: USER 1001 (non-root) in all Dockerfiles; no --privileged; read-only rootfs where possible
+Input validation: All external data (Finnhub JSON, RSS XML) parsed through Pydantic/feedparser — no direct dict access
+Logging: No PII or API keys in logs. Structured logs use key=value pairs — no f-string interpolation of secrets
+CORS: Explicit allowlist in FastAPI CORSMiddleware — not wildcard
+ONNX integrity: SHA-256 checksum verified at model load time
+15. Observability
+15.1 Logging Strategy
+Strategy: All logging via structlog — JSON-structured, machine-parseable, grep-friendly. Log level configurable via LOG_LEVEL env var. Format: {"timestamp":"...", "level":"INFO", "logger":"worker", "event":"inference_complete", "ticker":"AAPL", "latency_ms":24.3, "label":"positive"}
+Logger
+Level
+Key Events Logged
+ingestor
+INFO/WARN
+headlines_ingested, headline_deduplicated, finnhub_ratelimit_hit, rss_fallback_activated
+worker
+INFO/ERROR
+inference_complete (ticker, latency_ms, label), dlq_routed (headline_id, error), consumer_group_lag
+drift
+WARN
+drift_alert_fired (ticker, z_score, direction, threshold)
+database
+INFO/ERROR
+insert_headline, insert_telemetry, insert_drift_alert, query_latency_ms, connection_retry
+main (FastAPI)
+INFO
+websocket_connected (client_id), websocket_disconnected, broadcast_sent (n_clients), warmup_complete
+15.2 Metrics (Prometheus)
+Metric Name
+Type
+Labels & Description
+ingestor_headlines_ingested_total
+Counter
+source=finnhub|rss. Total headlines ingested.
+ingestor_deduplicated_total
+Counter
+Total deduplicated (skipped) headlines.
+worker_inferences_total
+Counter
+label=positive|negative|neutral. Inference outcomes.
+worker_dlq_total
+Counter
+error_type=onnx|clickhouse|redis. DLQ routings.
+inference_latency_seconds
+Histogram
+Buckets: 0.01, 0.02, 0.05, 0.1, 0.2, 0.5. ONNX inference latency.
+websocket_connections_active
+Gauge
+Current concurrent WebSocket clients.
+redis_stream_length
+Gauge
+stream=raw_headlines|dlq_headlines. Current XLEN.
+dlq_depth
+Gauge
+Depth of DLQ. Alert if > 10.
+drift_alerts_total
+Counter
+ticker, direction. Total drift alerts fired.
+15.3 Alerting (Phase 2 — Grafana Cloud Free Tier)
+Alert: dlq_depth > 10 for 5 minutes → Slack webhook / GitHub issue auto-create
+Alert: inference_latency_seconds p99 > 0.08 → latency regression warning
+Alert: redis_stream_length > 800 → approaching MAXLEN trim threshold
+Alert: ingestor_headlines_ingested_total rate == 0 for 5 min → ingestion stalled
+16. Error Handling Strategy
+16.1 Error Classification
+Error Class
+Example
+Behavior
+Recovery
+Transient External
+Finnhub 429 / timeout
+Activate RSS fallback; log WARN; increment counter
+Auto-recover next poll cycle
+Inference Failure
+OnnxRuntimeException
+Route message to DLQ; XACK; log ERROR with context
+Manual DLQ inspection; ONNX session restart on startup
+DB Write Failure
+ClickHouse timeout
+Retry 3x exponential backoff; route to DLQ if all fail
+ClickHouse reconnect on next healthy write attempt
+Redis Disconnection
+ConnectionError
+Log CRITICAL; ingestor/worker backoff 5s + retry
+Auto-reconnect via redis.asyncio reconnect pool
+Model Load Failure
+ONNX file missing
+Log CRITICAL + sys.exit(1). No silent degradation.
+Fix ONNX file + restart Docker container
+WebSocket Client Error
+Client disconnects
+Remove from broadcast registry; log INFO
+Client auto-reconnects; no server action needed
+16.2 User-Facing Error States
+Dashboard: WebSocket disconnect → "Pipeline disconnected. Reconnecting in Ns..." — exponential backoff 1s → 2s → 4s → 8s → 30s → 30s...
+Dashboard: No data for 5+ minutes → "No headlines received. Check /health endpoint." — link to /health
+Dashboard: REST endpoint failure → chart shows last known data with "Data stale as of HH:MM" badge
+17. Testing Strategy
+17.1 Test Pyramid
+Level
+Tool
+Coverage Target
+Key Test Cases
+Unit Tests
+pytest 8.x
+>= 80% coverage
+drift.py Z-score correctness; model.py inference shape; ingestor dedup hash; Pydantic schema validation
+Integration Tests
+pytest + testcontainers
+Critical paths
+Redis XADD → XREADGROUP roundtrip; ClickHouse insert + query; FastAPI /health 200 with mocked components
+E2E Tests
+Playwright (free)
+Core user flows
+Dashboard loads; WebSocket receives event; drift alert renders; /ping returns 200
+Load Tests
+Locust (free)
+100 hdl/min sustained
+100 headlines/min for 5 minutes; measure: DLQ count == 0, p99 inference < 50ms, no Redis memory overflow
+ML Evaluation
+evaluate.py (custom)
+F1 >= 0.88 on test set
+Per-class F1; confusion matrix; INT8 vs FP32 F1 delta < 2%; quantile regression: p99 < 50ms
+Security Tests
+pip-audit + npm audit
+0 critical CVEs
+Run on every PR in GitHub Actions; block merge on critical CVE
+Drift Detection
+pytest + seed_data.py
+TPR >= 95%
+Inject synthetic drift; verify DriftAlert written to CH within 5s; verify no false positive on stable baseline over 1000 samples
+17.2 Key Unit Test Cases
+
+
+
+Python
+# test_drift.pydef test_z_score_fires_above_threshold():    detector = DriftDetector(window_size=50, z_threshold=2.0, min_samples=30)    # Seed stable baseline (score ~0.5)    for _ in range(30): detector.update(0.5, "AAPL")    # Inject extreme outlier    result = detector.update(0.99, "AAPL")    assert result is not None    assert result.z_score > 2.0    assert result.direction == "bullish_spike"def test_insufficient_samples_suppresses_alert():    detector = DriftDetector(min_samples=30)    for _ in range(29): detector.update(0.99, "AAPL")  # Below min_samples    assert detector.update(0.01, "AAPL") is None# test_model.pydef test_inference_returns_valid_label():    result = model.infer("Apple reports record quarterly earnings")    assert result.label in {"positive", "negative", "neutral"}    assert 0.0 <= result.confidence <= 1.0    assert result.latency_ms > 0# test_ingestor.pydef test_dedup_hash_deterministic():    h1 = compute_hash("Apple beats earnings", "AAPL")    h2 = compute_hash("Apple beats earnings", "AAPL")    assert h1 == h2    assert h1 != compute_hash("Different headline", "AAPL")
+18. CI/CD Pipeline
+18.1 GitHub Actions Workflow
+
+
+
+YAML
+name: SentiStream CIon:  push: { branches: [main, develop] }  pull_request: { branches: [main] }jobs:  lint:    runs-on: ubuntu-latest    steps:      - uses: actions/checkout@v4      - uses: actions/setup-python@v5        with: { python-version: "3.11" }      - run: pip install ruff      - run: ruff check . --select E,F,I  # lint + isort      - run: ruff format --check .  test:    runs-on: ubuntu-latest    services:      redis:        image: redis:7.2-alpine        ports: ["6379:6379"]    steps:      - uses: actions/checkout@v4      - run: pip install -r backend/requirements.txt      - run: pip install -r backend/requirements-dev.txt      - run: pytest backend/ -v --cov=app --cov-report=term --cov-fail-under=80  ml-benchmark:    runs-on: ubuntu-latest    steps:      - uses: actions/checkout@v4      - run: pip install onnxruntime transformers optimum numpy      - run: python ml_pipeline/benchmark_ci.py  # fails if p99 regresses > 5ms  security:    runs-on: ubuntu-latest    steps:      - uses: actions/checkout@v4      - run: pip install pip-audit      - run: pip-audit -r backend/requirements.txt      - run: cd frontend && npm audit --audit-level=critical  frontend:    runs-on: ubuntu-latest    steps:      - uses: actions/checkout@v4      - uses: actions/setup-node@v4        with: { node-version: "20" }      - run: cd frontend && npm ci && npm run build
+18.2 Branch Strategy
+main: Protected. Requires PR + passing CI. Represents stable demo-ready state. Tagged releases (v0.1.0, v1.0.0).
+develop: Integration branch. All feature branches merge here first. CI runs on push.
+feature/*: Short-lived (< 1 week). One feature per branch. Squash merge to develop.
+hotfix/*: Branch from main. Merged to both main and develop. For demo-breaking bug fixes.
+19. Infrastructure Requirements
+19.1 Free-Tier Stack Summary
+Cost Efficiency: Total monthly cost: $0.00. Every component runs on a permanently free tier or a Docker container requiring only the developer's laptop.
+Service
+Provider
+Free Limit
+SentiStream Usage vs Limit
+Redis
+Local Docker
+Unlimited (local)
+~50MB peak usage (well under laptop memory)
+Redis (cloud)
+Upstash Redis
+10k req/day, 256MB
+~1440 req/day at 1 req/min → 14% of limit
+ClickHouse
+ClickHouse Cloud
+1M rows, 10GB
+~144k rows/day (7-day TTL → steady state ~1M rows)
+ClickHouse (local)
+Docker Server
+Unlimited (local)
+~500MB data for 7-day window
+Finnhub API
+Finnhub.io
+60 req/min
+1 req/min (1.7% of limit)
+GitHub Actions CI
+GitHub
+2000 min/month
+~50 min/month (10 PRs × 5min/run)
+Grafana Cloud
+Grafana
+10k series
+~15 metrics series — well within limit
+Frontend Hosting
+Vercel / Cloudflare
+Unlimited static
+Static React build — zero cost forever
+Backend Hosting
+Render.com
+750h/month (free)
+Demo mode: cold start acceptable for non-live deployment
+19.2 docker-compose.yml Architecture
+
+
+
+YAML
+version: "3.9"services:  redis:    image: redis:7.2-alpine    ports: ["6379:6379"]    command: redis-server --save "" --appendonly no --maxmemory 200mb --maxmemory-policy allkeys-lru    volumes: []  # No persistence needed for demo  clickhouse:    image: clickhouse/clickhouse-server:24.3-alpine    ports: ["8123:8123", "9000:9000"]    volumes:      - ch_data:/var/lib/clickhouse      - ./backend/app/schema.sql:/docker-entrypoint-initdb.d/init.sql    environment:      CLICKHOUSE_DB: sentistream      CLICKHOUSE_USER: default      CLICKHOUSE_PASSWORD: ${CH_PASSWORD}  backend:    build: ./backend    ports: ["8000:8000"]    depends_on: [redis, clickhouse]    env_file: .env    volumes:      - ./ml_pipeline/models:/app/models:ro  # Read-only ONNX model      - hf_cache:/root/.cache/huggingface     # Tokenizer cache  frontend:    build: ./frontend    ports: ["5173:5173"]    depends_on: [backend]    environment:      VITE_API_URL: http://localhost:8000volumes:  ch_data:  hf_cache:
+20. Deployment Architecture
+Environment
+Infrastructure
+Configuration
+Purpose
+Local Dev
+docker-compose up (all services)
+.env with local Redis + CH URLs
+Primary demo environment. Full stack in 3 minutes. No internet dependency (except Finnhub).
+CI (GitHub)
+GitHub runners + service containers
+GitHub Secrets for FINNHUB_KEY
+Automated lint + test + ml-benchmark + security on every PR.
+Cloud Demo
+Render + Vercel + Upstash + CH Cloud
+.env via Render / Vercel env vars
+Public demo URL for recruiters. Note: Render free tier spins down — /ping warmup on first visit.
+20.1 Local Environment Setup (Developer Runbook)
+
+
+
+Bash
+# 1. Clone repositorygit clone https://github.com/rutuja/sentistream.git && cd sentistream# 2. Configure environmentcp .env.example .env# Edit .env: add FINNHUB_API_KEY (free at finnhub.io)# 3. (Optional) Run ML training + ONNX export# Skip if using pre-built model in ml_pipeline/models/cd ml_pipeline && pip install -r requirements-train.txtpython train.py && python export_onnx.py && cd ..# 4. Start full stackdocker-compose up --build# 5. Warmup (auto-called by startup script, or manual)curl http://localhost:8000/ping# 6. Open dashboardopen http://localhost:5173# 7. Inject synthetic drift (for demo)docker-compose exec backend python scripts/seed_test_data.py --mode=drift --ticker=AAPL# Expected: drift alert appears in Analytics panel within 10 seconds
+21. Performance Targets & SLAs
+SLA Metric
+Target
+Measurement Method
+Consequence of Breach
+Inference Latency p50
+$< 25\text{ms}$
+inference_latency_seconds histogram
+Investigate ONNX session overhead; check tokenizer cache
+Inference Latency p95
+$< 40\text{ms}$
+inference_latency_seconds histogram
+Check CPU contention; consider batch inference
+Inference Latency p99
+$< 50\text{ms}$
+inference_latency_seconds histogram
+CI benchmark blocks PR if p99 regresses $> 5\text{ms}$ from baseline
+End-to-End Latency
+$< 500\text{ms}$
+processed_at - ingested_at (CH)
+Log WARNING; trace which stage is slow
+Dashboard Load Time
+$< 2\text{s}$ (LCP)
+Chrome DevTools Lighthouse
+Optimize Vite bundle splitting; add loading skeleton
+WS Event Delivery
+$< 50\text{ms}$
+Timestamp diff (worker → WS send)
+Check asyncio event loop contention
+CH Percentile Query
+$< 5\text{ms}$
+query_latency_ms in database.py logs
+Verify MV is populated; check CH free tier limits
+Drift Alert Latency
+$< 5\text{s}$
+seed_data.py → alerted_at diff
+Verify drift.py window is filling; check XREADGROUP lag
+Docker Cold Start
+$< 3\text{ minutes}$
+Timed: compose up → /ping status
+Optimize Dockerfile layers; pre-pull images in CI
+Message Loss Rate
+0%
+XPENDING + DLQ XLEN monitoring
+Investigate DLQ entries; check XACK logic
+22. Technical Risks
+Risk
+Impact
+Probability
+Mitigation
+ClickHouse Cloud free tier row limit hit during demo
+High
+Medium
+7-day TTL enforces rolling window. Monitor row count in /health. Purge old data via CH TRUNCATE if limit approached.
+Upstash Redis 10k req/day limit exhausted
+High
+Low
+Local Docker Redis is primary for demo. Upstash only for cloud deployment. 1440 req/day usage = 14% of limit.
+Finnhub API key banned (rate abuse)
+High
+Low
+Token bucket limiter at 1 req/min (vs 60 allowed). RSS fallback covers service gap. Never exceed 60 req/min.
+ONNX INT8 F1 drops below 0.86 on fine-tuned model
+Medium
+Medium
+CI benchmark validates F1 delta. If > 2% drop: serve FP32 ONNX (accepted latency trade-off, still within 200ms).
+ClickHouse Cloud cold start during live demo
+High
+Medium
+/ping warmup ensures CH is awake before demo begins. Local Docker ClickHouse as demo fallback.
+Financial PhraseBank class imbalance degrades negative class recall
+Medium
+High
+WeightedRandomSampler in DataLoader. Class weights [1.0, 2.1, 4.8] in CrossEntropyLoss. Evaluate per-class F1 separately.
+Scope creep: paper trading + SEC filing + Alpaca integration in parallel
+High
+High
+Strict MoSCoW in TRD. Paper trading is Phase 2. SEC filing is Phase 3. No deviation without explicit ADR update.
+WebSocket fan-out memory leak (dead connections accumulate)
+Medium
+Medium
+Broadcast uses try/except — dead connections raise exception and are removed from registry. Gauge monitors connection count.
+ONNX model file too large for GitHub LFS-free commit
+Medium
+Low
+FinBERT INT8 ONNX ~100MB. GitHub allows up to 100MB without LFS. If over: use Git LFS or HuggingFace Hub model storage.
+Render.com free tier 15-min spin-down breaks cloud demo
+Low
+High
+Document expected cold start in README. /ping endpoint in demo URL shortcut warms up on first visit. Local demo is primary.
+23. Implementation Roadmap
+Phase 1: Core Pipeline MVP (Weeks 1–6)
+W1: ML training: fine-tune FinBERT on Financial PhraseBank (train.py + benchmark.json)
+W1: ONNX export + INT8 quantization + F1 validation (finbert-int8.onnx)
+W2: docker-compose: Redis + ClickHouse + FastAPI skeleton (docker-compose up works)
+W2: ClickHouse schema DDL + materialized views (schema.sql applied)
+W3: ingestor.py: Finnhub + dedup + Redis XADD (Headlines in Redis stream)
+W3: worker.py: consumer group + model.py ONNX inference (Inference results in ClickHouse)
+W4: drift.py: Z-score + DriftAlert to ClickHouse (Drift alerts in CH on synthetic data)
+W4: FastAPI: /ping, /health, /metrics, WebSocket broadcast (All endpoints respond 200)
+W5: React dashboard: LiveTicker + WebSocket client (Live headlines in browser)
+W5: Observability.jsx: p50/p95/p99 charts from CH MV (Real latency charts)
+W5: Analytics.jsx: sentiment trends + drift alert display (Drift alerts visible in UI)
+W6: seed_test_data.py drift injection script (Drift alert fires in < 10s)
+W6: GitHub Actions CI: lint + test + benchmark + security (Green CI on main branch)
+W6: Documentation complete (README.md + ARCHITECTURE.md + DATA_SOURCES.md)
+W6: Loom demo video recording (5 min) (Loom link in README)
+Phase 2: Paper Trading Engine (Weeks 7–10)
+W7: trading.py: BaseStrategy interface + ThresholdStrategy (Signal generation working)
+W7: paper_trades ClickHouse table + inserts (Trades persisted in CH)
+W8: Portfolio P&L calculation from paper_trades (/api/v1/portfolio endpoint)
+W8: Portfolio.jsx: P&L chart + positions table (Portfolio view in dashboard)
+W9: Finnhub /quote integration for mark-to-market prices (Unrealized P&L live)
+W9: Upstash Redis cloud integration + Grafana Cloud setup (Cloud demo URL live)
+W10: Load testing: Locust 100 hdl/min for 5 min (Load test results in README)
+W10: Playwright E2E tests: dashboard + WebSocket + drift alert (E2E CI gate green)
+Phase 3: Production Platform (Weeks 11–16)
+SEC EDGAR API ingestion module (10-K/10-Q sentiment analysis)
+Model registry: versioned ONNX artifacts with A/B inference routing
+Prometheus → Grafana Cloud full dashboard with alerting rules
+Redis Pub/Sub for multi-instance WebSocket broadcast (stateless horizontal scaling)
+Alpaca Paper Trading API integration (Option B: read-only positions)
+CI: automated ONNX benchmark regression gate with historical tracking
+Optional: cloud deployment guide (AWS ECS free tier or Railway.app)
+24. Engineering Hiring Signal
+24.1 Advanced Concepts Demonstrated
+Concept
+SentiStream Implementation
+Interview Story
+Event-Driven Architecture
+Redis Streams + consumer groups + DLQ
+"I chose Redis Streams over Kafka for at-least-once semantics without the operational overhead of managing Kafka brokers at this scale."
+Distributed Systems
+Consumer group parallelism; stateless workers; idempotent dedup
+"Adding a second worker.py process requires zero code changes — the consumer group distributes automatically. Dedup keys prevent double-processing."
+ML Serving / MLOps
+ONNX Runtime INT8; model singleton; latency SLA; benchmark CI
+"INT8 dynamic quantization gave me a 3.5× latency improvement with < 1% F1 degradation. I validate this in CI — PRs are blocked if p99 regresses > 5ms."
+Statistical Modeling
+Z-score drift detection; rolling window; configurable threshold
+"The Z-score threshold of 2.0 represents the 95th percentile of a normal distribution. A spike above it means the sentiment shift is statistically significant, not noise."
+System Design
+Hexagonal architecture; ADRs; single docker-compose; modular monolith
+"Every module has a clean interface — model.py is a pure function. I could replace FinBERT with GPT-4 by changing model.py alone, nothing else."
+Observability
+structlog JSON; Prometheus /metrics; Grafana; ClickHouse MVs
+"I pre-aggregate latency percentiles in a ClickHouse materialized view — dashboard queries hit < 2ms vs 50ms raw scan. The Prometheus metrics expose DLQ depth for alerting."
+Database Engineering
+ClickHouse columnar OLAP; MergeTree; TTL; materialized views
+"ClickHouse's native quantile() function over a MergeTree table executes a columnar scan — no B-tree index overhead. It's architecturally correct for time-series aggregation."
+API Design
+FastAPI async; WebSocket push; Pydantic v2; OpenAPI docs; /ping
+"The /ping endpoint isn't just a health check — it's a connection warmer. Calling it before the demo ensures ClickHouse and Redis are not in cold-start state."
+DevOps / CI/CD
+GitHub Actions; Ruff; pytest-cov; pip-audit; ONNX benchmark gate
+"My CI pipeline has a dedicated ml-benchmark job that runs inference against a fixed dataset and blocks the PR if p99 exceeds baseline. Latency regression is caught before merge."
+Security Engineering
+Secrets management; detect-secrets; pip-audit; ONNX checksum; non-root
+"I verify the ONNX model checksum at startup — a tampered model is a hard failure, not a silent degradation. Secrets are blocked at commit via detect-secrets pre-commit hook."
+Quantitative Finance
+Sentiment signal generation; confidence threshold; position sizing; P&L tracking
+"The trading signal only fires if confidence exceeds 0.75 — below that, it's a hold. This prevents the model from trading on uncertain predictions."
+24.2 Role-Specific Talking Points
+ML Engineer: "I built the full serving layer: training → ONNX export → INT8 quantization → production inference with latency SLA enforced in CI."
+Data Engineer: "I designed the full streaming pipeline: Finnhub → Redis Streams consumer groups → ClickHouse columnar storage → materialized views for real-time aggregation."
+Backend Engineer: "I architected a FastAPI async application that manages WebSocket fan-out, Redis consumer groups, and ClickHouse writes concurrently using asyncio — no threading complexity."
+MLOps Engineer: "I built the full MLOps loop: training, evaluation, ONNX export, CI benchmark regression testing, drift detection with Z-score alerting, and Prometheus observability."
+Quant Engineer: "I implemented a sentiment-driven paper trading engine with a pluggable strategy interface — the ThresholdStrategy fires buy/sell signals only at confidence > 0.75."
+Staff / Principal: "The ADR document captures 7 architectural decisions with explicit trade-off reasoning. I can defend every choice at the staff-level: Redis vs Kafka, ONNX vs TorchServe, modular monolith vs microservices."
+FINAL NOTE FOR INTERVIEWERS: Every component in SentiStream was chosen to maximize explainability and trade-off depth. There are no "magic" choices. Each decision has a documented alternative, a measured trade-off, and a clear upgrade path. This is what production-grade thinking looks like before the first line of code is written.
