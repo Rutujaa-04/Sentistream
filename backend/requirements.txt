@@ -17,4 +17,5 @@ prometheus-client
 langdetect
 feedparser
 matplotlib
+onnxscript
 

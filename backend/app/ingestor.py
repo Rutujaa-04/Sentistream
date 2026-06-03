@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
+import uuid
 from typing import List, Dict, Any, Optional
 import aiohttp
 import feedparser
@@ -39,10 +40,10 @@ class IngestedHeadline(BaseModel):
     ingested_at: float  # Unix timestamp
 
 def compute_hash(text: str, ticker: str) -> str:
-    """Computes a unique SHA-256 hash for deduplication."""
-    hasher = hashlib.sha256()
-    hasher.update(f"{text.strip().lower()}:{ticker.strip().upper()}".encode("utf-8"))
-    return hasher.hexdigest()
+    """Computes a unique, deterministic version 5 UUID for database and deduplication."""
+    namespace = uuid.NAMESPACE_DNS
+    name = f"{text.strip().lower()}:{ticker.strip().upper()}"
+    return str(uuid.uuid5(namespace, name))
 
 class NewsIngestor:
     def __init__(self):

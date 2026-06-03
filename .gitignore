@@ -1,0 +1,31 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Models
+models/
+*.onnx
+*.onnx.data
+*.pt
+*.pth
+*.bin
+
+# Environment
+.env
+
+# Mac
+.DS_Store
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# VS Code
+.vscode/
+
+# Build
+dist/
+build/

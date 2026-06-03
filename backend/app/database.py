@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from clickhouse_driver import Client
 import structlog
@@ -88,8 +89,8 @@ class ClickHouseDatabase:
             ) VALUES
         """
         # Convert floats to clickhouse-compatible timestamps
-        ingested_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ingested_at))
-        processed_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(processed_at))
+        ingested_dt = datetime.fromtimestamp(ingested_at, tz=timezone.utc).replace(tzinfo=None)
+        processed_dt = datetime.fromtimestamp(processed_at, tz=timezone.utc).replace(tzinfo=None)
         
         row = (
             headline_id,
@@ -119,7 +120,7 @@ class ClickHouseDatabase:
                 total_latency_ms, worker_id, recorded_at
             ) VALUES
         """
-        recorded_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime())
+        recorded_dt = datetime.now(timezone.utc).replace(tzinfo=None)
         row = (
             headline_id,
             inference_latency_ms,
@@ -147,7 +148,7 @@ class ClickHouseDatabase:
                 direction, triggered_threshold, alerted_at
             ) VALUES
         """
-        alerted_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime())
+        alerted_dt = datetime.now(timezone.utc).replace(tzinfo=None)
         row = (
             alert_id,
             ticker,
@@ -177,7 +178,7 @@ class ClickHouseDatabase:
                 signal_source, confidence_score, executed_at
             ) VALUES
         """
-        executed_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime())
+        executed_dt = datetime.now(timezone.utc).replace(tzinfo=None)
         row = (
             trade_id,
             ticker,

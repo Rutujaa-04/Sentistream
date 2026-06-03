@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS headlines (
     source String,
     sentiment_label Enum8('positive' = 0, 'negative' = 1, 'neutral' = 2, 'undefined' = 3),
     confidence_score Float64,
-    ingested_at DateTime64(3, 'UTC'),
-    processed_at DateTime64(3, 'UTC')
+    ingested_at DateTime,
+    processed_at DateTime
 ) ENGINE = MergeTree()
 ORDER BY (ticker, processed_at)
 TTL processed_at + INTERVAL 7 DAY
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS inference_telemetry (
     tokenization_latency_ms Float64,
     total_latency_ms Float64,
     worker_id String,
-    recorded_at DateTime64(3, 'UTC')
+    recorded_at DateTime
 ) ENGINE = MergeTree()
 ORDER BY (recorded_at)
 TTL recorded_at + INTERVAL 7 DAY
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS drift_alerts (
     window_std Float64,
     direction Enum8('bullish_spike' = 0, 'bearish_spike' = 1),
     triggered_threshold Float64,
-    alerted_at DateTime64(3, 'UTC')
+    alerted_at DateTime
 ) ENGINE = MergeTree()
 ORDER BY (ticker, alerted_at)
 TTL alerted_at + INTERVAL 30 DAY
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     price_at_signal Float64,
     signal_source UUID, -- References headlines.id
     confidence_score Float64,
-    executed_at DateTime64(3, 'UTC')
+    executed_at DateTime
 ) ENGINE = MergeTree()
 ORDER BY (ticker, executed_at)
 SETTINGS index_granularity = 8192;

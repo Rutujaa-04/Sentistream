@@ -4,6 +4,7 @@ import argparse
 import time
 import uuid
 import random
+from datetime import datetime, timezone
 from clickhouse_driver import Client
 
 # Add parent directory to path to import properly
@@ -81,8 +82,8 @@ def main():
                 tot_latency = inf_latency + tok_latency + random.uniform(1, 3)
                 
                 # Format timestamps
-                ts_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts))
-                processed_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts + 0.2))
+                ts_dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+                processed_dt = datetime.fromtimestamp(ts + 0.2, tz=timezone.utc).replace(tzinfo=None)
                 
                 headline_rows.append((
                     headline_id,
@@ -127,8 +128,8 @@ def main():
         for i in range(45):
             h_id = str(uuid.uuid4())
             ts = t_now - 500 + i * 5
-            ts_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts))
-            processed_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts + 0.1))
+            ts_dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+            processed_dt = datetime.fromtimestamp(ts + 0.1, tz=timezone.utc).replace(tzinfo=None)
             
             baseline_headlines.append((
                 h_id,
@@ -157,8 +158,8 @@ def main():
             h_id = str(uuid.uuid4())
             text, _, sentiment, confidence = random.choice(DRIFT_HEADLINES)
             ts = t_now - 10 + i
-            ts_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts))
-            processed_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(ts + 0.1))
+            ts_dt = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+            processed_dt = datetime.fromtimestamp(ts + 0.1, tz=timezone.utc).replace(tzinfo=None)
             
             shock_headlines.append((
                 h_id,
@@ -180,7 +181,7 @@ def main():
         # 3. Manually insert the corresponding drift alert record so that the dashboard displays it!
         # (Mean will be low, new score is 1.0, std will be small, z-score will be > 3.0!)
         alert_id = str(uuid.uuid4())
-        alert_dt = time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(t_now))
+        alert_dt = datetime.fromtimestamp(t_now, tz=timezone.utc).replace(tzinfo=None)
         
         # Mathematical estimation: window contains ~45 neutral (0.0) and 15 positive (1.0).
         # Mean = 15/60 = 0.25. Std = sqrt((45*0.0625 + 15*0.5625)/60) = sqrt(0.1875) = 0.433
