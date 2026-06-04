@@ -43,11 +43,13 @@ jobs:
 
       - name: Wait for services to be ready
         run: |
-          for i in {1..20}; do
-            nc -z localhost 6379 && nc -z localhost 9000 && echo "Redis and ClickHouse are healthy!" && break
+          for i in {1..30}; do
+            nc -z localhost 6379 && curl -s http://localhost:8123/ping | grep -q "Ok" && echo "Redis and ClickHouse are healthy!" && exit 0
             echo "Waiting for Redis and ClickHouse..."
-            sleep 3
+            sleep 2
           done
+          echo "Services failed to become healthy in time!"
+          exit 1
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -113,7 +115,8 @@ jobs:
         run: |
           pip install pip-audit
           # Ignore safety audits on non-critical local dev packages if necessary, otherwise scan requirements
-          pip-audit -r backend/requirements.txt
+          # We ignore PYSEC-2025-217 and CVE-2026-1839 because they are in transformers v4, which is strictly required by optimum-onnx
+          pip-audit --ignore-vuln PYSEC-2025-217 --ignore-vuln CVE-2026-1839 -r backend/requirements.txt
           
       - name: Run npm audit
         run: |
