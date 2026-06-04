@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-permissions:
-  contents: write
-
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -85,7 +82,7 @@ jobs:
           
       - name: Compile and Export ONNX Model
         if: steps.cache-models.outputs.cache-hit != 'true'
-        run: python backend/ml/export_onnx.py > test_export.log 2>&1 || (cat test_export.log && exit 1)
+        run: python backend/ml/export_onnx.py
         
       - name: Run Pytest Suite with Coverage
         env:
@@ -98,18 +95,7 @@ jobs:
           CLICKHOUSE_DATABASE: default
           FINNHUB_API_KEY: ""
         run: |
-          pytest backend/tests/ -v --cov=backend/app --cov-report=term --cov-fail-under=45 > test_run.log 2>&1 || (cat test_run.log && exit 1)
-
-      - name: Push debug logs on failure
-        if: failure()
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          git checkout -B ci-debug
-          git add -f test_export.log || true
-          git add -f test_run.log || true
-          git commit -m "chore: GHA test debug logs [skip ci]" --allow-empty
-          git push origin ci-debug --force
+          pytest backend/tests/ -v --cov=backend/app --cov-report=term --cov-fail-under=45
 
 
   ml-benchmark:
@@ -145,24 +131,12 @@ jobs:
           
       - name: Export Quantized ONNX Model
         if: steps.cache-models.outputs.cache-hit != 'true'
-        run: python backend/ml/export_onnx.py > ml_export.log 2>&1 || (cat ml_export.log && exit 1)
+        run: python backend/ml/export_onnx.py
         
       - name: Run Model Performance Benchmark
         env:
           PYTHONPATH: backend
-        run: python backend/ml/benchmark_ci.py > ml_benchmark.log 2>&1 || (cat ml_benchmark.log && exit 1)
-
-      - name: Push debug logs on failure
-        if: failure()
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          git checkout -B ci-debug
-          git add -f ml_export.log || true
-          git add -f ml_benchmark.log || true
-          git commit -m "chore: GHA ml-benchmark debug logs [skip ci]" --allow-empty
-          git push origin ci-debug --force
-
+        run: python backend/ml/benchmark_ci.py
 
   security:
     runs-on: ubuntu-latest
