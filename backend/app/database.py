@@ -55,12 +55,17 @@ class ClickHouseDatabase:
         with open(schema_path, "r", encoding="utf-8") as f:
             sql = f.read()
 
-        # Split multiple queries by semicolon, filtering out comments and whitespace
+        # Split multiple queries by semicolon, filtering out comment lines and whitespace
         statements = []
         for stmt in sql.split(";"):
-            cleaned = stmt.strip()
-            # Skip empty entries or commented out lines
-            if cleaned and not cleaned.startswith("--"):
+            # Strip out lines starting with sql comments (--)
+            non_comment_lines = []
+            for line in stmt.splitlines():
+                line_stripped = line.strip()
+                if not line_stripped.startswith("--"):
+                    non_comment_lines.append(line)
+            cleaned = "\n".join(non_comment_lines).strip()
+            if cleaned:
                 statements.append(cleaned)
 
         for stmt in statements:
