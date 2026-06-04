@@ -1,11 +1,11 @@
+import asyncio
 import os
 import sys
-import asyncio
-import time
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
-from clickhouse_driver import Client
+from typing import Any, Dict, List, Optional
+
 import structlog
+from clickhouse_driver import Client
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

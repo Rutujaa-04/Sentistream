@@ -1,5 +1,5 @@
-import pytest
 from app.model import SentimentModel
+
 
 def test_inference_returns_valid_label():
     # Load model (since it is a singleton, this fetches the existing instance if already warmed)

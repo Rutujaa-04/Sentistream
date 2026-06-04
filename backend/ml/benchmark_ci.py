@@ -1,9 +1,11 @@
 import os
 import sys
 import time
+
 import numpy as np
 import onnxruntime as ort
 from transformers import AutoTokenizer
+
 
 def main():
     print("Running CI Model Benchmark (1000 inferences)...")

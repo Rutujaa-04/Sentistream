@@ -1,5 +1,7 @@
 import os
+
 from pydantic import BaseModel, Field
+
 
 class Settings(BaseModel):
     # API Keys

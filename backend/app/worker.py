@@ -1,22 +1,22 @@
-import os
-import sys
 import asyncio
 import json
+import os
+import sys
 import time
 import uuid
-from typing import Optional, Dict
+from typing import Dict, Optional
+
 import redis.asyncio as aioredis
 import structlog
-from pydantic import ValidationError
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
-from app.model import SentimentModel
-from app.drift import DriftDetector
 from app.database import ClickHouseDatabase
-from app.trading.simulated_engine import SimulatedExecutionEngine
+from app.drift import DriftDetector
+from app.model import SentimentModel
 from app.trading.alpaca_engine import AlpacaExecutionEngine
+from app.trading.simulated_engine import SimulatedExecutionEngine
 
 structlog.configure(
     processors=[

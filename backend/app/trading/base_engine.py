@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+
 class BaseExecutionEngine(ABC):
     @abstractmethod
     async def initialize(self):

@@ -1,11 +1,10 @@
+import asyncio
 import os
 import sys
-import asyncio
-import hashlib
-import json
 import time
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import aiohttp
 import feedparser
 import redis.asyncio as aioredis

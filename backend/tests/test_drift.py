@@ -1,6 +1,6 @@
-import pytest
 import numpy as np
 from app.drift import DriftDetector
+
 
 def test_z_score_fires_above_threshold():
     # Set up detector

@@ -1,6 +1,7 @@
-import zipfile
-import xml.etree.ElementTree as ET
 import os
+import xml.etree.ElementTree as ET
+import zipfile
+
 
 def docx_to_text(path):
     try:

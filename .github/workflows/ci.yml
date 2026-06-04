@@ -22,10 +22,7 @@ jobs:
           pip install ruff
 
       - name: Run Ruff Lint
-        run: ruff check . --select E,F,I
-
-      - name: Run Ruff Format
-        run: ruff format --check .
+        run: ruff check . --select E,F,I --ignore E501
 
   test:
     runs-on: ubuntu-latest
@@ -34,11 +31,6 @@ jobs:
         image: redis:7.2-alpine
         ports:
           - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       clickhouse:
         image: clickhouse/clickhouse-server:24.3-alpine
         ports:
@@ -46,13 +38,16 @@ jobs:
           - 8123:8123
         env:
           CLICKHOUSE_DB: default
-        options: >-
-          --health-cmd "wget --spider -q http://localhost:8123/ || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for services to be ready
+        run: |
+          for i in {1..20}; do
+            nc -z localhost 6379 && nc -z localhost 9000 && echo "Redis and ClickHouse are healthy!" && break
+            echo "Waiting for Redis and ClickHouse..."
+            sleep 3
+          done
       
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -1,17 +1,18 @@
+import json
 import os
 import sys
-import uuid
 import time
-import json
+import uuid
 from typing import Optional
+
 import redis.asyncio as aioredis
 import structlog
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from app.config import settings
-from app.trading.base_engine import BaseExecutionEngine
 from app.database import ClickHouseDatabase
+from app.trading.base_engine import BaseExecutionEngine
 
 logger = structlog.get_logger()
 

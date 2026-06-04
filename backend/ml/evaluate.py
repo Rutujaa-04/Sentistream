@@ -1,11 +1,16 @@
-import os
 import json
-import numpy as np
-import torch
-from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+import os
+
 import matplotlib.pyplot as plt
+import numpy as np
+from datasets import load_dataset
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+)
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer
+
 
 def main():
     print("Step 1: Loading Financial PhraseBank dataset for evaluation...")

@@ -1,14 +1,14 @@
 import os
 import sys
 import time
+
 import numpy as np
 import onnxruntime as ort
-from transformers import AutoTokenizer
 import structlog
+from transformers import AutoTokenizer
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.config import settings
 
 logger = structlog.get_logger()
 

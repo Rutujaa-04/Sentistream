@@ -1,6 +1,6 @@
-import pytest
-from fastapi.testclient import TestClient
 from app.main import app
+from fastapi.testclient import TestClient
+
 
 def test_ping_endpoint():
     # Wrap in context manager to trigger FastAPI startup lifespan (connects to CH & Redis, loads ONNX)

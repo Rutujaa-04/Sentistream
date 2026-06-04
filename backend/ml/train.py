@@ -1,18 +1,18 @@
 import os
 import sys
-import numpy as np
 from collections import Counter
+
+import numpy as np
 import torch
 import torch.nn as nn
 from datasets import load_dataset
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForSequenceClassification, 
-    TrainingArguments, 
-    Trainer,
-    TrainerCallback
-)
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    Trainer,
+    TrainingArguments,
+)
 
 # Ensure models directory exists
 os.makedirs("models", exist_ok=True)

@@ -1,9 +1,10 @@
-import pytest
-import time
 import uuid
+
+import pytest
 import redis.asyncio as aioredis
-from app.ingestor import compute_hash, NewsIngestor, IngestedHeadline
 from app.config import settings
+from app.ingestor import NewsIngestor, compute_hash
+
 
 def test_dedup_hash_deterministic():
     # Hash for identical headline + ticker must be deterministic

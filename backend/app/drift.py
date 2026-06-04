@@ -1,6 +1,8 @@
 import collections
+from typing import NamedTuple, Optional
+
 import numpy as np
-from typing import Optional, NamedTuple
+
 
 class DriftSignal(NamedTuple):
     ticker: str

@@ -1,14 +1,14 @@
+import json
 import os
-import sys
 import shutil
 import time
-import json
+
 import numpy as np
-import torch
-from transformers import AutoTokenizer
 import onnxruntime as ort
 from optimum.onnxruntime import ORTModelForSequenceClassification, ORTQuantizer
 from optimum.onnxruntime.configuration import AutoQuantizationConfig
+from transformers import AutoTokenizer
+
 
 def benchmark_onnx(model_path, tokenizer, dummy_text, num_runs=200):
     # Set thread count for reliable local CPU benchmarking
@@ -99,10 +99,10 @@ def main():
     # 3. Size Comparison
     fp32_size_mb = os.path.getsize(fp32_onnx_path) / (1024 * 1024)
     int8_size_mb = os.path.getsize(int8_onnx_path) / (1024 * 1024)
-    print(f"\n--- Model Size Comparison ---")
+    print("\n--- Model Size Comparison ---")
     print(f"FP32 Model Size: {fp32_size_mb:.2f} MB")
     print(f"INT8 Model Size: {int8_size_mb:.2f} MB (Reduced by {((fp32_size_mb - int8_size_mb) / fp32_size_mb) * 100:.1f}%)")
-    print(f"-----------------------------")
+    print("-----------------------------")
 
     # 4. Latency Benchmarking on CPU
     print("\nStep 3: Benchmarking FP32 vs INT8 latency on CPU...")
@@ -115,11 +115,11 @@ def main():
     int8_metrics = benchmark_onnx(int8_onnx_path, tokenizer, dummy_text)
 
     speedup = fp32_metrics["mean_ms"] / int8_metrics["mean_ms"]
-    print(f"\n--- CPU Latency Benchmark Results ---")
+    print("\n--- CPU Latency Benchmark Results ---")
     print(f"FP32 Mean Latency: {fp32_metrics['mean_ms']:.2f} ms (p99: {fp32_metrics['p99_ms']:.2f} ms)")
     print(f"INT8 Mean Latency: {int8_metrics['mean_ms']:.2f} ms (p99: {int8_metrics['p99_ms']:.2f} ms)")
     print(f"Dynamic INT8 speedup: {speedup:.2f}x faster CPU execution")
-    print(f"-------------------------------------")
+    print("-------------------------------------")
 
     # Save quantization benchmarks
     results_dir = "backend/ml/results"

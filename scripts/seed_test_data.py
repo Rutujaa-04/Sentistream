@@ -1,10 +1,11 @@
-import os
-import sys
 import argparse
+import os
+import random
+import sys
 import time
 import uuid
-import random
 from datetime import datetime, timezone
+
 from clickhouse_driver import Client
 
 # Add parent directory to path to import properly
@@ -121,7 +122,7 @@ def main():
         
         # 1. First, seed a stable, low neutral-heavy baseline to populate the rolling window
         # (50 headlines of neutral sentiment score=0.0)
-        print(f"Step 1: Seeding rolling baseline (45 neutral headlines)...")
+        print("Step 1: Seeding rolling baseline (45 neutral headlines)...")
         baseline_headlines = []
         baseline_telemetry = []
         

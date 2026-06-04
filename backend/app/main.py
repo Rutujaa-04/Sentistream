@@ -1,14 +1,14 @@
-import os
-import sys
 import asyncio
 import json
-import uuid
+import os
+import sys
 import time
-from typing import Set, Dict, List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, List, Optional, Set
+
 import redis.asyncio as aioredis
 import structlog
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
