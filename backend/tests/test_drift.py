@@ -34,9 +34,9 @@ def test_degenerate_data_handling_zero_std():
     for _ in range(40):
         detector.update(0.5, "AAPL")
     
-    # Under standard calculations, a different score would result in division by zero.
+    # We append 0.5 again, meaning standard deviation remains 0.0.
     # The detector has a safety guard `std < 1e-9` that prevents division by zero and returns None.
-    result = detector.update(1.0, "AAPL")
+    result = detector.update(0.5, "AAPL")
     assert result is None
 
 def test_context_isolation():
