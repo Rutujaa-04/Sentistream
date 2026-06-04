@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+import redis
 from clickhouse_driver import Client
 
 # Add parent directory to path to import properly
@@ -38,8 +39,8 @@ DRIFT_HEADLINES = [
 
 def main():
     parser = argparse.ArgumentParser(description="SentiStream Seeding & Synthetic Drift Injection Utility")
-    parser.add_argument("--mode", type=str, choices=["bulk", "drift"], required=True, 
-                        help="bulk: pre-warms ClickHouse charts with 6 hours of historical telemetry. drift: injects synthetic sentiment shock to fire Z-score alert.")
+    parser.add_argument("--mode", type=str, choices=["bulk", "drift", "trades"], required=True, 
+                        help="bulk: pre-warm ClickHouse charts. drift: inject drift alerts. trades: publish real-time trade triggering headlines to Redis.")
     parser.add_argument("--ticker", type=str, default="AAPL", help="Target ticker for synthetic drift injection.")
     
     args = parser.parse_args()
@@ -203,6 +204,46 @@ def main():
         print(f"\nDrift Alert injected successfully for {ticker}!")
         print("Details: Z-Score = 2.85 (Bullish Sentiment Spike).")
         print("Your dashboard's Analytics section will reflect the alert and updated chart immediately!")
+
+    elif args.mode == "trades":
+        print("\nRunning Mode: TRADES (Publishing high-confidence headlines to Redis raw_headlines stream)...")
+        try:
+            r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            r.ping()
+            print("Connected to Redis broker successfully.")
+        except Exception as e:
+            print(f"Error connecting to Redis: {e}")
+            sys.exit(1)
+
+        # High-confidence and test headlines matching ThresholdStrategy / model inference
+        trade_headlines = [
+            ("AAPL", "Apple beats Q3 revenue estimations by 12%, stock up 4% in premarket."),
+            ("TSLA", "Tesla vehicle deliveries beat Wall Street estimates as global demand recovers."),
+            ("NVDA", "NVIDIA announces next-generation Blackwell architecture, stock hits record high."),
+            ("SPY", "Federal Reserve signals pause on interest rate hikes, market indexes surge."),
+            ("AAPL", "Apple faces antitrust scrutiny from DOJ over App Store policies, stock dips 2%."),
+            ("TSLA", "Tesla recall of 200,000 vehicles due to software autopilot glitches."),
+            ("NVDA", "NVIDIA down 3% on concerns of artificial intelligence chip demand slowdown."),
+            ("AAPL", "Apple holds low-key product event announcing updated iPad colors."),
+            ("NVDA", "NVIDIA CEO to deliver keynote speech at Computex conference."),
+            ("NVDA", "NVIDIA beats revenue expectations by huge margin, forward guidance raised.")
+        ]
+
+        for ticker, text in trade_headlines:
+            headline_id = str(uuid.uuid4())
+            payload = {
+                "id": headline_id,
+                "ticker": ticker,
+                "headline_text": text,
+                "source": "trades_seeder",
+                "ingested_at": str(time.time())
+            }
+            # Publish to Redis stream raw_headlines (used by worker.py)
+            r.xadd("raw_headlines", payload, maxlen=1000, approximate=True)
+            print(f"Pushed trade-trigger headline to Redis: [{ticker}] {text[:60]}...")
+            time.sleep(1.5)  # Ensure timestamps and order are distinct
+
+        print("\nSeeded trades to stream successfully! Verify logs in worker daemon and updates on the dashboard.")
 
 if __name__ == "__main__":
     main()

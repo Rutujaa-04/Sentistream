@@ -15,6 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
 from app.database import ClickHouseDatabase
 from app.model import SentimentModel
+from app.trading.price_feed import PriceFeed
+from app.trading.portfolio_service import PortfolioService
 
 structlog.configure(
     processors=[
@@ -71,6 +73,8 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 db = ClickHouseDatabase()
+price_feed = PriceFeed()
+portfolio_service = PortfolioService(db, price_feed)
 redis_client: Optional[aioredis.Redis] = None
 pubsub_task: Optional[asyncio.Task] = None
 
@@ -106,8 +110,9 @@ async def lifespan(app: FastAPI):
     global redis_client, pubsub_task
     logger.info("Bootstrapping SentiStream API Gateway...")
     
-    # 1. Initialize and Warm ClickHouse Connections
+    # 1. Initialize and Warm ClickHouse & PriceFeed Connections
     await db.initialize()
+    await price_feed.initialize()
     
     # 2. Initialize Redis Connection Client with health check to prevent timeouts
     redis_client = aioredis.from_url(
@@ -141,6 +146,7 @@ async def lifespan(app: FastAPI):
             pass
     if redis_client:
         await redis_client.close()
+    await price_feed.close()
     await db.close()
 
 app = FastAPI(
@@ -302,11 +308,11 @@ async def get_drift_alerts(
 async def get_portfolio_summary():
     """Retrieves simulated paper trading portfolio and P&L results."""
     try:
-        data = await db.query_portfolio_summary()
+        data = await portfolio_service.reconstruct_portfolio()
         return data
     except Exception as e:
-        logger.error("Failed to query portfolio summary", error=str(e))
-        raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+        logger.error("Failed to reconstruct portfolio summary", error=str(e))
+        raise HTTPException(status_code=500, detail="Portfolio reconstruction failed.")
 
 # ==========================================
 # WEBSOCKET STREAMING GATEWAY

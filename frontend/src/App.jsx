@@ -215,6 +215,10 @@ export default function App() {
   const [latencyHistory, setLatencyHistory] = useState([]);
   const [sentimentTrends, setSentimentTrends] = useState([]);
   const [portfolio, setPortfolio] = useState(null);
+  
+  // Real-time trading states
+  const [showTradeGlow, setShowTradeGlow] = useState(false);
+  const [insufficientCapitalAlert, setInsufficientCapitalAlert] = useState(null);
 
   // Subscriptions & Filtering state
   const [selectedTicker, setSelectedTicker] = useState('ALL');
@@ -326,8 +330,18 @@ export default function App() {
         });
       } else if (eventType === "paper_trade") {
         logger_log("Paper trade executed live! Refreshing portfolio stats.");
+        setShowTradeGlow(true);
+        setTimeout(() => {
+          setShowTradeGlow(false);
+        }, 1500);
         // Re-fetch portfolio data instantly to show live position updates!
         fetchTelemetryData();
+      } else if (eventType === "insufficient_capital") {
+        logger_log("Insufficient capital warning received!");
+        setInsufficientCapitalAlert(eventData);
+        setTimeout(() => {
+          setInsufficientCapitalAlert(null);
+        }, 5000);
       }
     };
 
@@ -543,10 +557,71 @@ export default function App() {
           </div>
 
           {/* SIMULATED PAPER TRADING PORTFOLIO COMPONENT */}
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <h2 style={{ fontSize: '14px', letterSpacing: '0.05em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '10px' }}>
+          <div className={`card ${showTradeGlow ? 'glow-trade-flash' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: '16px', transition: 'all 0.3s ease' }}>
+            <h2 style={{ fontSize: '14px', letterSpacing: '0.05em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '10px', margin: 0 }}>
               QUANTITATIVE PAPER TRADING PORTFOLIO (HEXAGONAL LOG)
             </h2>
+
+            {insufficientCapitalAlert && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: '6px',
+                padding: '10px 14px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '11px',
+                color: 'var(--color-bearish)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                animation: 'pulse-red 2.5s infinite ease-in-out'
+              }}>
+                <span className="status-indicator offline" style={{ animation: 'none' }} />
+                <span>
+                  WARNING: INSUFFICIENT CAPITAL TO BUY {insufficientCapitalAlert.ticker}. REQUIRED: ${insufficientCapitalAlert.required_cash.toFixed(2)} | AVAILABLE: ${insufficientCapitalAlert.available_cash.toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {/* Portfolio Summary Header Metrics */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+              gap: '12px',
+              borderBottom: '1px solid var(--border-light)',
+              paddingBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>NET VALUE</span>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: '#FFF' }}>
+                  ${portfolio?.portfolio_value_usd !== undefined ? portfolio.portfolio_value_usd.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '100,000.00'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>CASH BALANCE</span>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: '#FFF' }}>
+                  ${portfolio?.cash_usd !== undefined ? portfolio.cash_usd.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '100,000.00'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>REALIZED P&L</span>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: portfolio?.realized_pnl_usd >= 0 ? 'var(--color-bullish)' : 'var(--color-bearish)' }}>
+                  ${portfolio?.realized_pnl_usd !== undefined ? (portfolio.realized_pnl_usd >= 0 ? '+' : '') + portfolio.realized_pnl_usd.toFixed(2) : '0.00'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>UNREALIZED P&L</span>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: portfolio?.unrealized_pnl_usd >= 0 ? 'var(--color-bullish)' : 'var(--color-bearish)' }}>
+                  ${portfolio?.unrealized_pnl_usd !== undefined ? (portfolio.unrealized_pnl_usd >= 0 ? '+' : '') + portfolio.unrealized_pnl_usd.toFixed(2) : '0.00'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>WIN RATE</span>
+                <span style={{ fontSize: '15px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: 'var(--color-neutral)' }}>
+                  {portfolio?.win_rate !== undefined ? Math.round(portfolio.win_rate * 100) : 0}%
+                </span>
+              </div>
+            </div>
 
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '12px', textAlign: 'left' }}>
@@ -555,6 +630,7 @@ export default function App() {
                     <th style={{ padding: '8px 12px' }}>TICKER</th>
                     <th style={{ padding: '8px 12px' }}>POSITION</th>
                     <th style={{ padding: '8px 12px' }}>AVG PRICE</th>
+                    <th style={{ padding: '8px 12px' }}>CURRENT PRICE</th>
                     <th style={{ padding: '8px 12px' }}>MARKET VALUE</th>
                     <th style={{ padding: '8px 12px' }}>UNREALIZED P&L</th>
                   </tr>
@@ -562,7 +638,7 @@ export default function App() {
                 <tbody>
                   {!portfolio?.positions || portfolio.positions.length === 0 ? (
                     <tr>
-                      <td colSpan="5" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <td colSpan="6" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
                         [ PORTFOLIO IS FLAT // WAITING FOR CONFIDENT SIGNALS TO TRANSACT ]
                       </td>
                     </tr>
@@ -572,7 +648,8 @@ export default function App() {
                         <td style={{ padding: '10px 12px', fontWeight: 'bold', color: '#FFF' }}>{pos.ticker}</td>
                         <td style={{ padding: '10px 12px', color: 'var(--color-bullish)' }}>{pos.shares} SHARES</td>
                         <td style={{ padding: '10px 12px' }}>${pos.avg_price.toFixed(2)}</td>
-                        <td style={{ padding: '10px 12px' }}>${(pos.shares * pos.avg_price).toFixed(2)}</td>
+                        <td style={{ padding: '10px 12px' }}>${pos.current_price.toFixed(2)}</td>
+                        <td style={{ padding: '10px 12px' }}>${pos.market_value.toFixed(2)}</td>
                         <td style={{ padding: '10px 12px', color: pos.unrealized_pnl >= 0 ? 'var(--color-bullish)' : 'var(--color-bearish)', fontWeight: 'bold' }}>
                           ${pos.unrealized_pnl >= 0 ? '+' : ''}{pos.unrealized_pnl.toFixed(2)}
                         </td>

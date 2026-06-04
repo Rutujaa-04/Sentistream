@@ -337,49 +337,30 @@ class ClickHouseDatabase:
             })
         return results
 
-    async def query_portfolio_summary(self) -> Dict[str, Any]:
-        """Calculates simulated portfolio statistics by joining paper trades (Phase 2)."""
+    async def query_raw_trades(self) -> List[Dict[str, Any]]:
+        """Queries raw paper trade records from the database sorted by execution time."""
         query = """
             SELECT 
-                count(*) AS total_trades,
-                sum(action = 'buy') AS buy_trades,
-                sum(action = 'sell') AS sell_trades
+                trade_id, ticker, action, quantity, price_at_signal, 
+                signal_source, confidence_score, executed_at
             FROM paper_trades
+            ORDER BY executed_at ASC
         """
         rows = await self.execute(query)
         
-        if not rows or len(rows) == 0:
-            return {"total_trades": 0, "win_rate": 0.0, "total_pnl_usd": 0.0, "positions": []}
-            
-        total, buys, sells = rows[0]
-        
-        # Aggregate mock open positions
-        pos_query = """
-            SELECT 
-                ticker,
-                sum(multiIf(action = 'buy', quantity, action = 'sell', -quantity, 0)) AS net_shares,
-                avg(price_at_signal) AS avg_buy_price
-            FROM paper_trades
-            GROUP BY ticker
-            HAVING net_shares > 0
-        """
-        pos_rows = await self.execute(pos_query)
-        
-        positions = []
-        for tk, shares, avg_price in pos_rows:
-            positions.append({
-                "ticker": tk,
-                "shares": int(shares),
-                "avg_price": round(float(avg_price), 2),
-                "unrealized_pnl": round(float(shares * 5.0), 2)  # Mock P&L increase for showcase
+        results = []
+        for trade_id, ticker, action, qty, price, sig_src, conf, exec_at in rows:
+            results.append({
+                "trade_id": str(trade_id),
+                "ticker": ticker,
+                "action": action,
+                "quantity": int(qty),
+                "price": float(price),
+                "signal_source": str(sig_src),
+                "confidence_score": float(conf),
+                "executed_at": exec_at.isoformat() + "Z" if hasattr(exec_at, "isoformat") else str(exec_at)
             })
-
-        return {
-            "total_trades": int(total),
-            "total_pnl_usd": round(float(total * 15.0), 2),  # Mock trading success for demo
-            "win_rate": 0.65,
-            "positions": positions
-        }
+        return results
 
     async def close(self):
         """Safely disconnects client connections."""

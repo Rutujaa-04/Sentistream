@@ -205,3 +205,18 @@ h1, h2, h3, h4 {
 .glow-red { filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.6)); }
 .glow-green { filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.6)); }
 .glow-amber { filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6)); }
+
+/* Quantitative Trading Animations */
+@keyframes border-flash-blue {
+  0%, 100% { border-color: var(--border-light); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4); }
+  50% { border-color: var(--color-neutral); box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
+}
+
+.glow-trade-flash {
+  animation: border-flash-blue 1.5s ease-out;
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 2px var(--color-bearish)); }
+  50% { opacity: 0.6; filter: drop-shadow(0 0 8px var(--color-bearish)); }
+}

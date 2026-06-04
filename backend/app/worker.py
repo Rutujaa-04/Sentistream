@@ -17,6 +17,9 @@ from app.drift import DriftDetector
 from app.model import SentimentModel
 from app.trading.alpaca_engine import AlpacaExecutionEngine
 from app.trading.simulated_engine import SimulatedExecutionEngine
+from app.trading.strategy import ThresholdStrategy
+from app.trading.price_feed import PriceFeed
+from app.trading.portfolio_service import PortfolioService
 
 structlog.configure(
     processors=[
@@ -33,6 +36,15 @@ class ConsumerWorker:
         self.model: Optional[SentimentModel] = None
         self.db: Optional[ClickHouseDatabase] = None
         self.trading_engine = None
+        self.price_feed: Optional[PriceFeed] = None
+        self.portfolio_service: Optional[PortfolioService] = None
+        self.strategy: Optional[ThresholdStrategy] = None
+        
+        # In-memory portfolio tracking state (incrementally updated)
+        self.portfolio_cash = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+        self.portfolio_positions: Dict[str, Dict[str, Any]] = {}  # ticker -> {"shares": int, "avg_price": float}
+        self.total_portfolio_value = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+        
         # Registry of drift detectors isolated by ticker to prevent contamination
         self.drift_detectors: Dict[str, DriftDetector] = {}
         self.is_running = True
@@ -51,7 +63,29 @@ class ConsumerWorker:
         # 3. Load ONNX Model Singleton
         self.model = SentimentModel()
         
-        # 4. Initialize Hexagonal Trading Adapter based on config
+        # 4. Initialize Trading Strategy & Price Feed Singleton
+        self.price_feed = PriceFeed()
+        await self.price_feed.initialize()
+        
+        self.strategy = ThresholdStrategy(threshold=0.75)
+        self.portfolio_service = PortfolioService(self.db, self.price_feed)
+
+        # 5. Cold-start in-memory portfolio state from ClickHouse trade logs
+        portfolio_state = await self.portfolio_service.reconstruct_portfolio()
+        self.portfolio_cash = float(portfolio_state["cash_usd"])
+        self.portfolio_positions = {
+            pos["ticker"]: {"shares": int(pos["shares"]), "avg_price": float(pos["avg_price"])}
+            for pos in portfolio_state["positions"]
+        }
+        self.total_portfolio_value = float(portfolio_state["portfolio_value_usd"])
+        logger.info(
+            "Worker portfolio state cold-started successfully",
+            cash=self.portfolio_cash,
+            positions=self.portfolio_positions,
+            total_value=self.total_portfolio_value
+        )
+        
+        # 6. Initialize Hexagonal Trading Adapter based on config
         engine_type = os.environ.get("TRADING_ENGINE", "simulated").lower()
         if engine_type == "alpaca":
             self.trading_engine = AlpacaExecutionEngine()
@@ -59,7 +93,7 @@ class ConsumerWorker:
             self.trading_engine = SimulatedExecutionEngine()
         await self.trading_engine.initialize()
         
-        # 5. Ensure Redis Consumer Group exists
+        # 7. Ensure Redis Consumer Group exists
         await self.setup_consumer_group()
 
     async def setup_consumer_group(self):
@@ -196,22 +230,111 @@ class ConsumerWorker:
                     direction=drift_signal.direction
                 )
 
-            # D. Execute Paper Trade Order if sentiment confidence is high
-            # (Buy on positive sentiment > 75%, Sell on negative sentiment > 75%)
-            if inference["label"] in ("positive", "negative") and inference["confidence"] > 0.75:
-                trade_side = "buy" if inference["label"] == "positive" else "sell"
-                # Simulating a default pricing track (SPY=$500, AAPL=$175, standard default=$150)
-                mock_prices = {"SPY": 500.0, "AAPL": 175.0, "TSLA": 180.0, "NVDA": 900.0}
-                price = mock_prices.get(ticker, 150.0)
+            # D. Execute Paper Trade Order if strategy triggers a signal
+            trade_action = self.strategy.should_trade(ticker, inference["label"], inference["confidence"])
+            if trade_action:
+                current_price = await self.price_feed.get_price(ticker)
                 
-                await self.trading_engine.execute_order(
-                    ticker=ticker,
-                    action=trade_side,
-                    quantity=10,  # Transact 10 shares
-                    price_at_signal=price,
-                    signal_source_id=headline_id,
-                    confidence_score=inference["confidence"]
-                )
+                if trade_action == "buy":
+                    # Allocate 5% of total capital per trade
+                    trade_size = 0.05 * self.total_portfolio_value
+                    qty = int(trade_size / current_price)
+                    required_cost = qty * current_price
+                    
+                    if qty <= 0 or self.portfolio_cash < required_cost:
+                        logger.warning(
+                            "Insufficient capital to execute buy order",
+                            ticker=ticker,
+                            required_cash=round(required_cost, 2),
+                            available_cash=round(self.portfolio_cash, 2),
+                            quantity=qty
+                        )
+                        # Publish warning to Redis Pub/Sub so dashboard can display it
+                        warning_payload = {
+                            "type": "insufficient_capital",
+                            "data": {
+                                "ticker": ticker,
+                                "required_cash": round(required_cost, 2),
+                                "available_cash": round(self.portfolio_cash, 2)
+                            }
+                        }
+                        await self.redis_client.publish("sentistream:sentiment_events", json.dumps(warning_payload))
+                    else:
+                        trade_id = await self.trading_engine.execute_order(
+                            ticker=ticker,
+                            action="buy",
+                            quantity=qty,
+                            price_at_signal=current_price,
+                            signal_source_id=headline_id,
+                            confidence_score=inference["confidence"]
+                        )
+                        # Update in-memory state incrementally
+                        self.portfolio_cash -= required_cost
+                        if ticker not in self.portfolio_positions:
+                            self.portfolio_positions[ticker] = {"shares": 0, "avg_price": 0.0}
+                        
+                        held = self.portfolio_positions[ticker]["shares"]
+                        avg_price = self.portfolio_positions[ticker]["avg_price"]
+                        total_cost = (held * avg_price) + required_cost
+                        new_held = held + qty
+                        self.portfolio_positions[ticker] = {
+                            "shares": new_held,
+                            "avg_price": total_cost / new_held
+                        }
+                        
+                        # Publish paper_trade event
+                        trade_payload = {
+                            "type": "paper_trade",
+                            "data": {
+                                "trade_id": trade_id,
+                                "ticker": ticker,
+                                "action": "buy",
+                                "quantity": qty,
+                                "price": current_price,
+                                "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                            }
+                        }
+                        await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
+                
+                elif trade_action == "sell":
+                    # Liquidate entire position of ticker
+                    if ticker in self.portfolio_positions and self.portfolio_positions[ticker]["shares"] > 0:
+                        qty = self.portfolio_positions[ticker]["shares"]
+                        trade_id = await self.trading_engine.execute_order(
+                            ticker=ticker,
+                            action="sell",
+                            quantity=qty,
+                            price_at_signal=current_price,
+                            signal_source_id=headline_id,
+                            confidence_score=inference["confidence"]
+                        )
+                        # Update in-memory state incrementally
+                        proceeds = qty * current_price
+                        self.portfolio_cash += proceeds
+                        self.portfolio_positions.pop(ticker, None)
+                        
+                        # Publish paper_trade event
+                        trade_payload = {
+                            "type": "paper_trade",
+                            "data": {
+                                "trade_id": trade_id,
+                                "ticker": ticker,
+                                "action": "sell",
+                                "quantity": qty,
+                                "price": current_price,
+                                "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                            }
+                        }
+                        await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
+                    else:
+                        logger.info("Sell signal ignored because position is flat", ticker=ticker)
+
+                # Recompute total portfolio value
+                positions_mv = 0.0
+                for tk, pos_data in self.portfolio_positions.items():
+                    tk_price = await self.price_feed.get_price(tk)
+                    positions_mv += pos_data["shares"] * tk_price
+                self.total_portfolio_value = self.portfolio_cash + positions_mv
 
             # 5. Broadcast real-time event to FastAPI clients via Redis Pub/Sub
             event_payload = {
@@ -290,6 +413,8 @@ class ConsumerWorker:
         self.is_running = False
         if self.trading_engine and hasattr(self.trading_engine, "close"):
             await self.trading_engine.close()
+        if self.price_feed:
+            await self.price_feed.close()
         if self.redis_client:
             await self.redis_client.close()
         if self.db:
