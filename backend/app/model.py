@@ -42,8 +42,14 @@ class SentimentModel:
         # (Allows the pipeline to work even before training runs, ensuring demo stability)
         self.tokenizer_path = os.path.join(workspace_dir, "models", "checkpoint-best")
         if not os.path.exists(self.tokenizer_path):
-            logger.warning("Fine-tuned checkpoint not found. Falling back to default ProsusAI/finbert tokenizer.")
-            self.tokenizer_path = "ProsusAI/finbert"
+            # Check if ONNX export directory exists, which contains the local tokenizer copy
+            onnx_tok_path = os.path.join(workspace_dir, "models", "finbert-onnx")
+            if os.path.exists(onnx_tok_path):
+                self.tokenizer_path = onnx_tok_path
+                logger.info("Fine-tuned checkpoint not found. Using local ONNX tokenizer.", source=self.tokenizer_path)
+            else:
+                logger.warning("Fine-tuned checkpoint and local ONNX tokenizer not found. Falling back to default ProsusAI/finbert tokenizer.")
+                self.tokenizer_path = "ProsusAI/finbert"
 
         # Initialize Tokenizer (reads from local cache volume once downloaded)
         try:
