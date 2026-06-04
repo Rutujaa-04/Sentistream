@@ -1,0 +1,142 @@
+name: SentiStream CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linting Tools
+        run: |
+          pip install ruff
+
+      - name: Run Ruff Lint
+        run: ruff check . --select E,F,I
+
+      - name: Run Ruff Format
+        run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.3-alpine
+        ports:
+          - 9000:9000
+          - 8123:8123
+        env:
+          CLICKHOUSE_DB: default
+        options: >-
+          --health-cmd "wget --spider -q http://localhost:8123/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-dev.txt
+          
+      - name: Compile and Export ONNX Model
+        run: python backend/ml/export_onnx.py
+        
+      - name: Run Pytest Suite with Coverage
+        env:
+          PYTHONPATH: backend
+          REDIS_URL: redis://localhost:6379
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: 9000
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ""
+          CLICKHOUSE_DATABASE: default
+          FINNHUB_API_KEY: ""
+        run: |
+          pytest backend/tests/ -v --cov=backend/app --cov-report=term --cov-fail-under=45
+
+  ml-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          
+      - name: Export Quantized ONNX Model
+        run: python backend/ml/export_onnx.py
+        
+      - name: Run Model Performance Benchmark
+        env:
+          PYTHONPATH: backend
+        run: python backend/ml/benchmark_ci.py
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          # Ignore safety audits on non-critical local dev packages if necessary, otherwise scan requirements
+          pip-audit -r backend/requirements.txt
+          
+      - name: Run npm audit
+        run: |
+          cd frontend
+          npm audit --audit-level=critical
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          
+      - name: Build React Application
+        run: |
+          cd frontend
+          npm ci
+          npm run build

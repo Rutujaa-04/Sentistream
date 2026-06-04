@@ -29,3 +29,8 @@ node_modules/
 # Build
 dist/
 build/
+
+# Tests and coverage
+.coverage
+.pytest_cache/
+htmlcov/
