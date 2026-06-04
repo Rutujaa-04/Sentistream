@@ -244,6 +244,13 @@ export default function App() {
         setBackendPing(pingData);
       }
 
+      // Recent headlines
+      const headlinesRes = await fetch(`http://localhost:8000/api/v1/headlines?limit=20${tickerParam}`);
+      if (headlinesRes.ok) {
+        const headlinesData = await headlinesRes.json();
+        setHeadlines(headlinesData.data);
+      }
+
       // Latency Percentiles (1 hour window)
       const latRes = await fetch('http://localhost:8000/api/v1/latency-percentiles?window=1h');
       if (latRes.ok) {

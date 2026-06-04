@@ -78,26 +78,28 @@ async def redis_pubsub_listener():
     """Background listener task that consumes from Redis Pub/Sub and broadcasts to WebSockets."""
     global redis_client
     logger.info("Starting Redis Pub/Sub listener task...")
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe("sentistream:sentiment_events")
     
-    try:
-        async for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
-                
-            payload = json.loads(message["data"])
-            event_type = payload.get("type")
-            data = payload.get("data")
+    while True:
+        try:
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe("sentistream:sentiment_events")
+            logger.info("Successfully subscribed to Redis Pub/Sub sentistream:sentiment_events")
             
-            await manager.broadcast(event_type, data)
-    except asyncio.CancelledError:
-        logger.info("Redis Pub/Sub listener cancelled.")
-    except Exception as e:
-        logger.error("Error in Redis Pub/Sub listener", error=str(e))
-    finally:
-        await pubsub.unsubscribe("sentistream:sentiment_events")
-        await pubsub.close()
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                    
+                payload = json.loads(message["data"])
+                event_type = payload.get("type")
+                data = payload.get("data")
+                
+                await manager.broadcast(event_type, data)
+        except asyncio.CancelledError:
+            logger.info("Redis Pub/Sub listener cancelled.")
+            break
+        except Exception as e:
+            logger.error("Error in Redis Pub/Sub listener. Reconnecting in 5s...", error=str(e))
+            await asyncio.sleep(5)
 
 # FastAPI Lifespan Context Manager
 async def lifespan(app: FastAPI):
@@ -107,8 +109,13 @@ async def lifespan(app: FastAPI):
     # 1. Initialize and Warm ClickHouse Connections
     await db.initialize()
     
-    # 2. Initialize Redis Connection Client
-    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    # 2. Initialize Redis Connection Client with health check to prevent timeouts
+    redis_client = aioredis.from_url(
+        settings.REDIS_URL, 
+        decode_responses=True,
+        health_check_interval=30,
+        socket_timeout=None
+    )
     await redis_client.ping()
     logger.info("Redis connection warmed up successfully.")
     
@@ -162,7 +169,7 @@ async def ping():
     t0 = time.perf_counter()
     try:
         # Validate ClickHouse
-        await asyncio.to_thread(db.client.execute, "SELECT 1")
+        await db.execute("SELECT 1")
         # Validate Redis
         await redis_client.ping()
         latency = (time.perf_counter() - t0) * 1000.0
@@ -186,7 +193,7 @@ async def health():
     """Returns granular health metrics across pipeline backup nodes."""
     try:
         # ClickHouse row count
-        rows = await asyncio.to_thread(db.client.execute, "SELECT count() FROM headlines")
+        rows = await db.execute("SELECT count() FROM headlines")
         ch_rows = rows[0][0] if rows else 0
         
         # Redis stream depth
@@ -221,6 +228,23 @@ async def health():
 # ==========================================
 # TIME-SERIES ANALYTICS ENDPOINTS
 # ==========================================
+
+@app.get("/api/v1/headlines")
+async def get_recent_headlines(
+    ticker: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100)
+):
+    """Retrieves recent sentiment-analyzed headlines from ClickHouse."""
+    try:
+        data = await db.query_recent_headlines(ticker=ticker, limit=limit)
+        return {
+            "ticker": ticker,
+            "limit": limit,
+            "data": data
+        }
+    except Exception as e:
+        logger.error("Failed to query recent headlines", error=str(e))
+        raise HTTPException(status_code=500, detail="ClickHouse query failed.")
 
 @app.get("/api/v1/latency-percentiles")
 async def get_latency_percentiles(window: str = Query(default="1h", pattern="^(1h|6h|24h)$")):

@@ -16,6 +16,14 @@ logger = structlog.get_logger()
 class ClickHouseDatabase:
     def __init__(self):
         self.client: Optional[Client] = None
+        self.lock = asyncio.Lock()
+
+    async def execute(self, query: str, params: Any = None) -> Any:
+        """Executes a ClickHouse query under an asyncio lock to prevent simultaneous connection queries."""
+        async with self.lock:
+            if params is not None:
+                return await asyncio.to_thread(self.client.execute, query, params)
+            return await asyncio.to_thread(self.client.execute, query)
 
     async def initialize(self):
         """Initializes clickhouse connection client and runs migrations."""
@@ -59,7 +67,7 @@ class ClickHouseDatabase:
             try:
                 # Wrap blocking clickhouse-driver calls in separate worker threads 
                 # so we never block FastAPI's async event loop!
-                await asyncio.to_thread(self.client.execute, stmt)
+                await self.execute(stmt)
             except Exception as e:
                 logger.error("Migration query failed", statement=stmt[:50], error=str(e))
                 raise e
@@ -103,7 +111,7 @@ class ClickHouseDatabase:
             processed_dt
         )
         
-        await asyncio.to_thread(self.client.execute, query, [row])
+        await self.execute(query, [row])
 
     async def insert_telemetry(
         self,
@@ -129,7 +137,7 @@ class ClickHouseDatabase:
             worker_id,
             recorded_dt
         )
-        await asyncio.to_thread(self.client.execute, query, [row])
+        await self.execute(query, [row])
 
     async def insert_drift_alert(
         self,
@@ -159,7 +167,7 @@ class ClickHouseDatabase:
             triggered_threshold,
             alerted_dt
         )
-        await asyncio.to_thread(self.client.execute, query, [row])
+        await self.execute(query, [row])
 
     async def insert_paper_trade(
         self,
@@ -189,7 +197,7 @@ class ClickHouseDatabase:
             confidence_score,
             executed_dt
         )
-        await asyncio.to_thread(self.client.execute, query, [row])
+        await self.execute(query, [row])
 
     # ==========================================
     # QUERY METHODS (High-performance OLAP)
@@ -212,7 +220,7 @@ class ClickHouseDatabase:
             GROUP BY bucket
             ORDER BY bucket ASC
         """
-        rows = await asyncio.to_thread(self.client.execute, query)
+        rows = await self.execute(query)
         
         results = []
         for bucket, p50, p95, p99, samples in rows:
@@ -247,7 +255,7 @@ class ClickHouseDatabase:
             GROUP BY bucket
             ORDER BY bucket ASC
         """
-        rows = await asyncio.to_thread(self.client.execute, query)
+        rows = await self.execute(query)
         
         results = []
         for bucket, pos, neg, neu, total in rows:
@@ -257,6 +265,39 @@ class ClickHouseDatabase:
                 "negative": int(neg),
                 "neutral": int(neu),
                 "total": int(total)
+            })
+        return results
+
+    async def query_recent_headlines(self, ticker: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+        """Retrieves recent sentiment-analyzed headlines from ClickHouse, joining with latency telemetry."""
+        where_clause = ""
+        if ticker:
+            where_clause = f"WHERE h.ticker = '{ticker.upper()}'"
+
+        query = f"""
+            SELECT 
+                h.id, h.ticker, h.headline_text, h.source, h.sentiment_label, 
+                h.confidence_score, h.processed_at,
+                COALESCE(t.inference_latency_ms, 0.0) AS latency_ms
+            FROM headlines h
+            LEFT JOIN inference_telemetry t ON h.id = t.headline_id
+            {where_clause}
+            ORDER BY h.processed_at DESC
+            LIMIT {limit}
+        """
+        rows = await self.execute(query)
+        
+        results = []
+        for hid, tk, text, source, sentiment, confidence, processed_at, latency in rows:
+            results.append({
+                "id": str(hid),
+                "ticker": tk,
+                "headline": text,
+                "source": source,
+                "sentiment": sentiment,
+                "confidence": float(confidence),
+                "latency_ms": round(float(latency), 2),
+                "processed_at": processed_at.isoformat() + "Z" if hasattr(processed_at, "isoformat") else str(processed_at)
             })
         return results
 
@@ -275,7 +316,7 @@ class ClickHouseDatabase:
             ORDER BY alerted_at DESC
             LIMIT {limit}
         """
-        rows = await asyncio.to_thread(self.client.execute, query)
+        rows = await self.execute(query)
         
         results = []
         for alert_id, tk, z_score, w_mean, w_std, direction, thres, alerted_at in rows:
@@ -300,7 +341,7 @@ class ClickHouseDatabase:
                 sum(action = 'sell') AS sell_trades
             FROM paper_trades
         """
-        rows = await asyncio.to_thread(self.client.execute, query)
+        rows = await self.execute(query)
         
         if not rows or len(rows) == 0:
             return {"total_trades": 0, "win_rate": 0.0, "total_pnl_usd": 0.0, "positions": []}
@@ -317,7 +358,7 @@ class ClickHouseDatabase:
             GROUP BY ticker
             HAVING net_shares > 0
         """
-        pos_rows = await asyncio.to_thread(self.client.execute, pos_query)
+        pos_rows = await self.execute(pos_query)
         
         positions = []
         for tk, shares, avg_price in pos_rows:
