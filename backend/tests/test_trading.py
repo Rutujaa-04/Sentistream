@@ -1,14 +1,13 @@
-import pytest
-import time
 import json
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+import time
+from unittest.mock import ANY, AsyncMock, MagicMock
 
-from app.trading.strategy import ThresholdStrategy
-from app.trading.price_feed import PriceFeed
+import pytest
 from app.trading.portfolio_service import PortfolioService
+from app.trading.price_feed import PriceFeed
+from app.trading.strategy import ThresholdStrategy
 from app.worker import ConsumerWorker
-from app.config import settings
+
 
 def test_threshold_strategy_logic():
     # Cooldown is 1s to make testing easy

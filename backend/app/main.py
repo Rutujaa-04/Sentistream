@@ -15,8 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
 from app.database import ClickHouseDatabase
 from app.model import SentimentModel
-from app.trading.price_feed import PriceFeed
 from app.trading.portfolio_service import PortfolioService
+from app.trading.price_feed import PriceFeed
 
 structlog.configure(
     processors=[

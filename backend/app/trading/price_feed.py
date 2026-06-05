@@ -1,9 +1,10 @@
+import os
+import sys
 import time
 from typing import Dict, Tuple
+
 import aiohttp
 import structlog
-import sys
-import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings

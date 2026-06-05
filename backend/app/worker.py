@@ -4,7 +4,7 @@ import os
 import sys
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
 import structlog
@@ -16,10 +16,10 @@ from app.database import ClickHouseDatabase
 from app.drift import DriftDetector
 from app.model import SentimentModel
 from app.trading.alpaca_engine import AlpacaExecutionEngine
+from app.trading.portfolio_service import PortfolioService
+from app.trading.price_feed import PriceFeed
 from app.trading.simulated_engine import SimulatedExecutionEngine
 from app.trading.strategy import ThresholdStrategy
-from app.trading.price_feed import PriceFeed
-from app.trading.portfolio_service import PortfolioService
 
 structlog.configure(
     processors=[

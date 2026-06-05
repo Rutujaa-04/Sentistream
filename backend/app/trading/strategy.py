@@ -1,6 +1,7 @@
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
+
 import structlog
 
 logger = structlog.get_logger()
