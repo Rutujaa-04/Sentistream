@@ -7,8 +7,9 @@ from typing import Dict, List, Optional, Set
 
 import redis.asyncio as aioredis
 import structlog
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -164,6 +165,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==========================================
+# PROMETHEUS TELEMETRY MIDDLEWARE & ROUTE
+# ==========================================
+
+HTTP_REQUEST_COUNT = Counter(
+    "sentistream_http_requests_total",
+    "Total HTTP Requests received",
+    ["method", "endpoint", "status_code"]
+)
+
+HTTP_REQUEST_LATENCY = Histogram(
+    "sentistream_http_request_duration_seconds",
+    "HTTP Request Latency in seconds",
+    ["method", "endpoint"],
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 1.0, 2.5]
+)
+
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    method = request.method
+    endpoint = request.url.path
+    
+    # Exclude the `/metrics` endpoint to prevent Prometheus scraper traffic from 
+    # inflating the request counts and latency statistics, ensuring we measure 
+    # actual user/dashboard traffic rather than scraping telemetry.
+    if endpoint == "/metrics":
+        return await call_next(request)
+        
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    latency = time.perf_counter() - start_time
+    
+    status_code = str(response.status_code)
+    HTTP_REQUEST_COUNT.labels(method=method, endpoint=endpoint, status_code=status_code).inc()
+    HTTP_REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(latency)
+    
+    return response
+
+@app.get("/metrics")
+def get_prometheus_metrics():
+    """Exposes Prometheus scraper metrics endpoint."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # ==========================================
 # REST DIAGNOSTICS & HEALTH

@@ -25,6 +25,7 @@ class DriftDetector:
         self.window = collections.deque(maxlen=window_size)
         self.z_threshold = z_threshold
         self.min_samples = min_samples
+        self.last_z = 0.0
 
     def update(self, score: float, ticker: str) -> Optional[DriftSignal]:
         """
@@ -38,6 +39,7 @@ class DriftDetector:
         
         # 1. Warmup guard: suppress alerts if we have insufficient history
         if len(self.window) < self.min_samples:
+            self.last_z = 0.0
             return None
 
         # 2. Compute rolling metrics using numpy
@@ -47,10 +49,12 @@ class DriftDetector:
 
         # 3. Degenerate case guard: if all scores are identical (std = 0.0), Z-score is mathematically undefined
         if std < 1e-9:
+            self.last_z = 0.0
             return None
 
         # 4. Calculate Z-score standard deviation from rolling baseline
         z = (score - mean) / std
+        self.last_z = z
 
         # 5. Outlier check
         if abs(z) > self.z_threshold:

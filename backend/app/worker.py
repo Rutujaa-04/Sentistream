@@ -8,6 +8,20 @@ from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
 import structlog
+from prometheus_client import start_http_server
+from app.metrics import (
+    INFERENCE_LATENCY,
+    TOKENIZATION_LATENCY,
+    HEADLINES_PROCESSED,
+    DRIFT_ALERTS,
+    ROLLING_Z_SCORE,
+    TRADES_EXECUTED,
+    PORTFOLIO_CASH,
+    PORTFOLIO_TOTAL_VALUE,
+    POSITION_SHARES,
+    REDIS_STREAM_BACKLOG,
+    DLQ_BACKLOG
+)
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,6 +61,8 @@ class ConsumerWorker:
         
         # Registry of drift detectors isolated by ticker to prevent contamination
         self.drift_detectors: Dict[str, DriftDetector] = {}
+        # Tracks the last time a headline was processed for a ticker to detect quiet tickers
+        self.last_headline_time: Dict[str, float] = {}
         self.is_running = True
 
     async def initialize(self):
@@ -70,6 +86,13 @@ class ConsumerWorker:
         self.strategy = ThresholdStrategy(threshold=0.75)
         self.portfolio_service = PortfolioService(self.db, self.price_feed)
 
+        # Start background Prometheus metrics scraper server
+        try:
+            start_http_server(port=8001, addr="0.0.0.0")
+            logger.info("Prometheus HTTP metrics server running on port 8001")
+        except Exception as e:
+            logger.error("Failed to start Prometheus server (may already be running)", error=str(e))
+
         # 5. Cold-start in-memory portfolio state from ClickHouse trade logs
         portfolio_state = await self.portfolio_service.reconstruct_portfolio()
         self.portfolio_cash = float(portfolio_state["cash_usd"])
@@ -78,6 +101,13 @@ class ConsumerWorker:
             for pos in portfolio_state["positions"]
         }
         self.total_portfolio_value = float(portfolio_state["portfolio_value_usd"])
+        
+        # Set initial Prometheus gauges
+        PORTFOLIO_CASH.set(self.portfolio_cash)
+        PORTFOLIO_TOTAL_VALUE.set(self.total_portfolio_value)
+        for ticker, pos in self.portfolio_positions.items():
+            POSITION_SHARES.labels(ticker=ticker).set(pos["shares"])
+            
         logger.info(
             "Worker portfolio state cold-started successfully",
             cash=self.portfolio_cash,
@@ -171,6 +201,13 @@ class ConsumerWorker:
             # 2. Run Quantized ONNX Inference
             inference = self.model.infer(headline_text)
             
+            # Observe inference latencies in Prometheus (converting ms to seconds)
+            INFERENCE_LATENCY.observe(inference["latency_ms"] / 1000.0)
+            TOKENIZATION_LATENCY.observe(inference["tokenization_latency_ms"] / 1000.0)
+            
+            # Increment pipeline processed counter
+            HEADLINES_PROCESSED.labels(ticker=ticker, sentiment=inference["label"], status="success").inc()
+            
             # 3. Calculate Statistical Sentiment Drift
             # Convert label to numeric score for math calculations: pos=1.0, neg=-1.0, neu=0.0
             sentiment_score = 0.0
@@ -181,6 +218,12 @@ class ConsumerWorker:
                 
             detector = self.get_drift_detector(ticker)
             drift_signal = detector.update(sentiment_score, ticker)
+            
+            # Update last processed headline time for this ticker
+            self.last_headline_time[ticker] = time.time()
+            
+            # Update Prometheus rolling Z-score gauge
+            ROLLING_Z_SCORE.labels(ticker=ticker).set(detector.last_z)
             
             # 4. Write data to ClickHouse (Headlines, Telemetry, and Drift Alerts)
             # DDL matches exact ClickHouse structure
@@ -223,6 +266,7 @@ class ConsumerWorker:
                     direction=drift_signal.direction,
                     triggered_threshold=drift_signal.triggered_threshold
                 )
+                DRIFT_ALERTS.labels(ticker=ticker, direction=drift_signal.direction).inc()
                 logger.warning(
                     "Statistical Sentiment Drift Alert triggered", 
                     ticker=ticker, 
@@ -282,6 +326,11 @@ class ConsumerWorker:
                             "avg_price": total_cost / new_held
                         }
                         
+                        # Update Prometheus metrics
+                        TRADES_EXECUTED.labels(ticker=ticker, action="buy").inc()
+                        PORTFOLIO_CASH.set(self.portfolio_cash)
+                        POSITION_SHARES.labels(ticker=ticker).set(new_held)
+                        
                         # Publish paper_trade event
                         trade_payload = {
                             "type": "paper_trade",
@@ -313,6 +362,11 @@ class ConsumerWorker:
                         self.portfolio_cash += proceeds
                         self.portfolio_positions.pop(ticker, None)
                         
+                        # Update Prometheus metrics
+                        TRADES_EXECUTED.labels(ticker=ticker, action="sell").inc()
+                        PORTFOLIO_CASH.set(self.portfolio_cash)
+                        POSITION_SHARES.labels(ticker=ticker).set(0)
+                        
                         # Publish paper_trade event
                         trade_payload = {
                             "type": "paper_trade",
@@ -335,6 +389,9 @@ class ConsumerWorker:
                     tk_price = await self.price_feed.get_price(tk)
                     positions_mv += pos_data["shares"] * tk_price
                 self.total_portfolio_value = self.portfolio_cash + positions_mv
+                
+                # Update total portfolio value gauge
+                PORTFOLIO_TOTAL_VALUE.set(self.total_portfolio_value)
 
             # 5. Broadcast real-time event to FastAPI clients via Redis Pub/Sub
             event_payload = {
@@ -370,13 +427,41 @@ class ConsumerWorker:
             logger.info("Successfully processed message", message_id=message_id, ticker=ticker, sentiment=inference["label"])
 
         except KeyError as e:
+            ticker_label = fields.get("ticker", "UNKNOWN").strip().upper() if isinstance(fields, dict) else "UNKNOWN"
+            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error").inc()
             await self.route_to_dlq(message_id, fields, f"Missing required payload key: {str(e)}")
         except Exception as e:
+            ticker_label = fields.get("ticker", "UNKNOWN").strip().upper() if isinstance(fields, dict) else "UNKNOWN"
+            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error").inc()
             await self.route_to_dlq(message_id, fields, f"Processing execution failed: {str(e)}")
+
+    async def record_queue_backlogs(self):
+        """Periodically records queue lengths for raw stream and DLQ into Prometheus gauges."""
+        while self.is_running:
+            try:
+                if self.redis_client:
+                    raw_len = await self.redis_client.xlen("raw_headlines")
+                    dlq_len = await self.redis_client.xlen("dlq_headlines")
+                    REDIS_STREAM_BACKLOG.set(raw_len)
+                    DLQ_BACKLOG.set(dlq_len)
+
+                # Reset Z-score gauge to 0.0 for quiet tickers to prevent stale values
+                now = time.time()
+                for ticker, last_time in list(self.last_headline_time.items()):
+                    if now - last_time > 60.0:
+                        ROLLING_Z_SCORE.labels(ticker=ticker).set(0.0)
+                        if ticker in self.drift_detectors:
+                            self.drift_detectors[ticker].last_z = 0.0
+            except Exception as e:
+                logger.error("Failed to query stream queue backlogs or reset quiet ticker gauges", error=str(e))
+            await asyncio.sleep(5)
 
     async def start_consuming(self):
         """Starts the Redis consumer loop utilizing consumer group offsets."""
         logger.info("Consumer loop started. Reading stream raw_headlines...")
+        
+        # Start background queue backlog logging task
+        backlog_task = asyncio.create_task(self.record_queue_backlogs())
         
         while self.is_running:
             try:

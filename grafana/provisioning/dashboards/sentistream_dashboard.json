@@ -1,0 +1,385 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "FinBERT ONNX Inference Latency (ms)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(sentistream_inference_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p99 Latency",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum(rate(sentistream_inference_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p95 Latency",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum(rate(sentistream_inference_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p50 Latency",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2
+          },
+          "unit": "ms",
+          "min": 0
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Ingestion Throughput (Headlines / Min)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(sentistream_headlines_processed_total[1m])) by (sentiment) * 60",
+          "legendFormat": "{{sentiment}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1.5
+          },
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "title": "Rolling Statistical Sentiment Z-Scores",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_rolling_z_score",
+          "legendFormat": "{{ticker}} Z-score",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": -2.0 },
+              { "color": "red", "value": -3.0 },
+              { "color": "orange", "value": 2.0 },
+              { "color": "red", "value": 3.0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "title": "Simulated Cash Balance",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_portfolio_cash_usd",
+          "legendFormat": "Cash Balance",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "usd",
+          "min": 0,
+          "max": 100000
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "id": 5,
+      "title": "Total Portfolio Value",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_portfolio_total_value_usd",
+          "legendFormat": "Net Capital",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "usd",
+          "min": 50000,
+          "max": 150000,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 90000 },
+              { "color": "green", "value": 100000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 6,
+      "title": "Active Position Holdings (Shares)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_position_shares",
+          "legendFormat": "{{ticker}} Position",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          },
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 7,
+      "title": "Redis Broker Stream Queue Backlog",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_redis_stream_backlog",
+          "legendFormat": "raw_headlines backlog",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1.5
+          },
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 8,
+      "title": "Dead-Letter Queue (DLQ) size",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sentistream_dlq_backlog",
+          "legendFormat": "dlq_headlines backlog",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "short",
+          "min": 0
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "sentistream",
+    "mlops",
+    "trading"
+  ],
+  "timezone": "browser",
+  "title": "SentiStream MLOps & Portfolio Dashboard",
+  "uid": "sentistream_observability_dashboard",
+  "version": 1
+}
