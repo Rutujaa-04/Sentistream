@@ -30,6 +30,7 @@ class Settings(BaseModel):
     # Paper Trading Strategy Selection
     TRADING_STRATEGY: str = Field(default="threshold")
     INITIAL_PORTFOLIO_CAPITAL: float = Field(default=100000.0)
+    FORCE_TRADE_COST_USD: float = Field(default=0.0)
 
     @classmethod
     def load(cls):

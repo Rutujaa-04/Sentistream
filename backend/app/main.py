@@ -284,6 +284,37 @@ async def health():
         )
 
 # ==========================================
+# TEST-ONLY ENDPOINTS (No Auth Guard)
+# ==========================================
+
+# SECURITY NOTICE: This route has no authentication guard as it is test-only infrastructure 
+# designed strictly for local E2E automated tests (Playwright) to inject mock headlines. 
+# In a production deployment, this entire endpoint must be disabled, removed, or fully authenticated.
+@app.post("/api/v1/test/inject")
+async def inject_test_headline(payload: dict):
+    """
+    TEST-ONLY INFRASTRUCTURE: Injects headlines directly into the Redis stream.
+    
+    WARNING: This endpoint has no authentication guard and is designed strictly 
+    for E2E testing (Playwright) in development and test environments. Do not 
+    expose this route in production.
+    """
+    import uuid
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis client not initialized")
+    
+    headline_id = payload.get("id", str(uuid.uuid4()))
+    redis_payload = {
+        "id": headline_id,
+        "ticker": payload.get("ticker", "AAPL").strip().upper(),
+        "headline_text": payload.get("headline_text", "Test headline"),
+        "source": payload.get("source", "test_injector"),
+        "ingested_at": str(time.time())
+    }
+    await redis_client.xadd("raw_headlines", redis_payload, maxlen=1000, approximate=True)
+    return {"status": "injected", "headline_id": headline_id}
+
+# ==========================================
 # TIME-SERIES ANALYTICS ENDPOINTS
 # ==========================================
 

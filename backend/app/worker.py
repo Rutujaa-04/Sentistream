@@ -285,6 +285,10 @@ class ConsumerWorker:
                     trade_size = 0.05 * self.total_portfolio_value
                     qty = int(trade_size / current_price)
                     required_cost = qty * current_price
+
+                    # Cost override to simulate capital depletion (test-only)
+                    if settings.FORCE_TRADE_COST_USD > 0.0:
+                        required_cost = settings.FORCE_TRADE_COST_USD
                     
                     if qty <= 0 or self.portfolio_cash < required_cost:
                         logger.warning(
