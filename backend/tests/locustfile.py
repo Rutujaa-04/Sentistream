@@ -1,8 +1,11 @@
 import time
 import uuid
-from locust import User, HttpUser, task, between
+
 import redis
+from locust import HttpUser, User, between, task
+
 from backend.app.config import settings
+
 
 class RedisPipelineUser(User):
     # Simulates the news ingestion pipeline writing to Redis stream.
