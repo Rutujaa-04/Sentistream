@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # 1. Model Inference Telemetry Metrics
 INFERENCE_LATENCY = Histogram(

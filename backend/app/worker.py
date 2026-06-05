@@ -8,20 +8,20 @@ from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
 import structlog
-from prometheus_client import start_http_server
 from app.metrics import (
-    INFERENCE_LATENCY,
-    TOKENIZATION_LATENCY,
-    HEADLINES_PROCESSED,
+    DLQ_BACKLOG,
     DRIFT_ALERTS,
-    ROLLING_Z_SCORE,
-    TRADES_EXECUTED,
+    HEADLINES_PROCESSED,
+    INFERENCE_LATENCY,
     PORTFOLIO_CASH,
     PORTFOLIO_TOTAL_VALUE,
     POSITION_SHARES,
     REDIS_STREAM_BACKLOG,
-    DLQ_BACKLOG
+    ROLLING_Z_SCORE,
+    TOKENIZATION_LATENCY,
+    TRADES_EXECUTED,
 )
+from prometheus_client import start_http_server
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,6 +63,7 @@ class ConsumerWorker:
         self.drift_detectors: Dict[str, DriftDetector] = {}
         # Tracks the last time a headline was processed for a ticker to detect quiet tickers
         self.last_headline_time: Dict[str, float] = {}
+        self.backlog_task: Optional[asyncio.Task] = None
         self.is_running = True
 
     async def initialize(self):
@@ -461,7 +462,7 @@ class ConsumerWorker:
         logger.info("Consumer loop started. Reading stream raw_headlines...")
         
         # Start background queue backlog logging task
-        backlog_task = asyncio.create_task(self.record_queue_backlogs())
+        self.backlog_task = asyncio.create_task(self.record_queue_backlogs())
         
         while self.is_running:
             try:
@@ -496,6 +497,12 @@ class ConsumerWorker:
         """Gracefully shuts down database and broker connection clients."""
         logger.info("Gracefully closing Consumer Worker...")
         self.is_running = False
+        if self.backlog_task:
+            self.backlog_task.cancel()
+            try:
+                await self.backlog_task
+            except asyncio.CancelledError:
+                pass
         if self.trading_engine and hasattr(self.trading_engine, "close"):
             await self.trading_engine.close()
         if self.price_feed:
