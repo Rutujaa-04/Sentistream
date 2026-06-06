@@ -326,9 +326,15 @@ async def get_recent_headlines(
     """Retrieves recent sentiment-analyzed headlines from ClickHouse."""
     try:
         data = await db.query_recent_headlines(ticker=ticker, limit=limit)
+        total_query = "SELECT count() FROM headlines"
+        if ticker:
+            total_query += f" WHERE ticker = '{ticker.upper()}'"
+        total_rows = await db.execute(total_query)
+        total_count = total_rows[0][0] if total_rows else 0
         return {
             "ticker": ticker,
             "limit": limit,
+            "total_count": total_count,
             "data": data
         }
     except Exception as e:

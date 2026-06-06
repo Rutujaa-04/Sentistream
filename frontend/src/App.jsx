@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 // CUSTOM SVG CHART COMPONENT: LATENCY PERCENTILES
 // ==========================================
 function LatencyChart({ data }) {
-  if (!data || data.length < 2) {
+  if (!data || data.length === 0) {
     return (
       <div style={{ height: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4B5563', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
         [ PIPELINE WARMING UP // GATHERING LATENCY TELEMETRY ]
@@ -12,8 +12,25 @@ function LatencyChart({ data }) {
     );
   }
 
+  // Prep data to ensure at least 2 points to draw line charts
+  let chartData = data;
+  if (data.length === 1) {
+    const singlePoint = data[0];
+    const prevBucket = new Date(new Date(singlePoint.bucket) - 60000).toISOString();
+    chartData = [
+      {
+        bucket: prevBucket,
+        p50_ms: 0,
+        p95_ms: 0,
+        p99_ms: 0,
+        samples: 0
+      },
+      singlePoint
+    ];
+  }
+
   // Find max latency to scale Y axis dynamically
-  const maxVal = Math.max(...data.map(d => Math.max(d.p50_ms, d.p95_ms, d.p99_ms)), 60.0);
+  const maxVal = Math.max(...chartData.map(d => Math.max(d.p50_ms, d.p95_ms, d.p99_ms)), 60.0);
   const yMax = Math.ceil(maxVal / 10) * 10 + 10; // Round up to nearest 10 with margin
 
   // SVG dimensions
@@ -28,12 +45,12 @@ function LatencyChart({ data }) {
   const chartHeight = height - paddingTop - paddingBottom;
 
   // Helper to map data index and value to SVG coordinates
-  const getX = (index) => paddingLeft + (index / (data.length - 1)) * chartWidth;
+  const getX = (index) => paddingLeft + (index / (chartData.length - 1)) * chartWidth;
   const getY = (val) => paddingTop + chartHeight - (val / yMax) * chartHeight;
 
   // Generate SVG path string for a key
   const generatePath = (key) => {
-    return data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d[key])}`).join(' ');
+    return chartData.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d[key])}`).join(' ');
   };
 
   return (
@@ -52,9 +69,9 @@ function LatencyChart({ data }) {
         })}
 
         {/* X-Axis Ticks (Time labels) */}
-        {data.map((d, i) => {
+        {chartData.map((d, i) => {
           // Label every 4th bucket to avoid crowding
-          if (i % Math.ceil(data.length / 5) !== 0 && i !== data.length - 1) return null;
+          if (i % Math.ceil(chartData.length / 5) !== 0 && i !== chartData.length - 1) return null;
           const x = getX(i);
           const timeStr = d.bucket.split('T')[1]?.substring(0, 5) || '';
           return (
@@ -85,7 +102,7 @@ function LatencyChart({ data }) {
 // CUSTOM SVG CHART COMPONENT: SENTIMENT TRENDS
 // ==========================================
 function SentimentTrendChart({ data }) {
-  if (!data || data.length < 2) {
+  if (!data || data.length === 0) {
     return (
       <div style={{ height: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4B5563', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
         [ PIPELINE WARMING UP // ANALYZING SENTIMENT DISTRIBUTION ]
@@ -93,8 +110,25 @@ function SentimentTrendChart({ data }) {
     );
   }
 
+  // Prep data to ensure at least 2 points to draw line charts
+  let chartData = data;
+  if (data.length === 1) {
+    const singlePoint = data[0];
+    const prevBucket = new Date(new Date(singlePoint.bucket) - 60000).toISOString();
+    chartData = [
+      {
+        bucket: prevBucket,
+        positive: 0,
+        negative: 0,
+        neutral: 0,
+        total: 0
+      },
+      singlePoint
+    ];
+  }
+
   // Find max total count in a single bucket to scale Y axis
-  const maxVal = Math.max(...data.map(d => d.total), 5);
+  const maxVal = Math.max(...chartData.map(d => d.total), 5);
   const yMax = Math.ceil(maxVal / 5) * 5 + 2;
 
   // SVG dimensions
@@ -108,7 +142,7 @@ function SentimentTrendChart({ data }) {
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
 
-  const getX = (index) => paddingLeft + (index / (data.length - 1)) * chartWidth;
+  const getX = (index) => paddingLeft + (index / (chartData.length - 1)) * chartWidth;
   const getY = (val) => paddingTop + chartHeight - (val / yMax) * chartHeight;
 
   // Generate SVG area and path strings for stacked charts
@@ -116,37 +150,37 @@ function SentimentTrendChart({ data }) {
   const paths = { negArea: '', neuArea: '', posArea: '', negLine: '', neuLine: '', posLine: '' };
   
   // 1. Negative Area (Bottom)
-  paths.negLine = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d.negative)}`).join(' ');
-  paths.negArea = `${paths.negLine} L ${getX(data.length - 1)} ${getY(0)} L ${getX(0)} ${getY(0)} Z`;
+  paths.negLine = chartData.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d.negative)}`).join(' ');
+  paths.negArea = `${paths.negLine} L ${getX(chartData.length - 1)} ${getY(0)} L ${getX(0)} ${getY(0)} Z`;
 
   // 2. Neutral Stacked
-  paths.neuLine = data.map((d, i) => {
+  paths.neuLine = chartData.map((d, i) => {
     const stackedVal = d.negative + d.neutral;
     return `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(stackedVal)}`;
   }).join(' ');
-  paths.neuArea = data.map((d, i) => {
+  paths.neuArea = chartData.map((d, i) => {
     const stackedVal = d.negative + d.neutral;
     return `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(stackedVal)}`;
   }).join(' ');
   // Complete the loop using the top of negative as base
-  const neuBase = [...data].reverse().map((d, i) => {
-    const idx = data.length - 1 - i;
+  const neuBase = [...chartData].reverse().map((d, i) => {
+    const idx = chartData.length - 1 - i;
     return `L ${getX(idx)} ${getY(d.negative)}`;
   }).join(' ');
   paths.neuArea = `${paths.neuArea} ${neuBase} Z`;
 
   // 3. Positive Stacked
-  paths.posLine = data.map((d, i) => {
+  paths.posLine = chartData.map((d, i) => {
     const stackedVal = d.negative + d.neutral + d.positive;
     return `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(stackedVal)}`;
   }).join(' ');
-  paths.posArea = data.map((d, i) => {
+  paths.posArea = chartData.map((d, i) => {
     const stackedVal = d.negative + d.neutral + d.positive;
     return `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(stackedVal)}`;
   }).join(' ');
   // Complete the loop using the top of neutral as base
-  const posBase = [...data].reverse().map((d, i) => {
-    const idx = data.length - 1 - i;
+  const posBase = [...chartData].reverse().map((d, i) => {
+    const idx = chartData.length - 1 - i;
     return `L ${getX(idx)} ${getY(d.negative + d.neutral)}`;
   }).join(' ');
   paths.posArea = `${paths.posArea} ${posBase} Z`;
@@ -167,8 +201,8 @@ function SentimentTrendChart({ data }) {
         })}
 
         {/* X-Axis Ticks */}
-        {data.map((d, i) => {
-          if (i % Math.ceil(data.length / 5) !== 0 && i !== data.length - 1) return null;
+        {chartData.map((d, i) => {
+          if (i % Math.ceil(chartData.length / 5) !== 0 && i !== chartData.length - 1) return null;
           const x = getX(i);
           const timeStr = d.bucket.split('T')[1]?.substring(0, 5) || '';
           return (
@@ -209,6 +243,7 @@ export default function App() {
   
   // Real-time Event States
   const [headlines, setHeadlines] = useState([]);
+  const [totalHeadlinesCount, setTotalHeadlinesCount] = useState(0);
   const [driftAlerts, setDriftAlerts] = useState([]);
   
   // Historical Analytics States (from ClickHouse)
@@ -228,7 +263,7 @@ export default function App() {
   const backoffMultiplierRef = useRef(1);
 
   // Dynamic system metric card counters
-  const totalProcessed = headlines.length;
+  const totalProcessed = totalHeadlinesCount;
   const bullishCount = headlines.filter(h => h.sentiment === 'positive').length;
   const bearishCount = headlines.filter(h => h.sentiment === 'negative').length;
   const neutralCount = headlines.filter(h => h.sentiment === 'neutral').length;
@@ -253,6 +288,7 @@ export default function App() {
       if (headlinesRes.ok) {
         const headlinesData = await headlinesRes.json();
         setHeadlines(headlinesData.data);
+        setTotalHeadlinesCount(headlinesData.total_count || headlinesData.data.length);
       }
 
       // Latency Percentiles (1 hour window)
@@ -322,6 +358,7 @@ export default function App() {
           if (updated.length > 100) updated.pop();
           return updated;
         });
+        setTotalHeadlinesCount(prev => prev + 1);
       } else if (eventType === "drift_alert") {
         setDriftAlerts(prev => {
           const updated = [eventData, ...prev];
