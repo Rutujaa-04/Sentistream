@@ -235,6 +235,95 @@ function SentimentTrendChart({ data }) {
 }
 
 // ==========================================
+// CUSTOM SVG CHART COMPONENT: P&L HISTORY
+// ==========================================
+function PnLHistoryChart({ data }) {
+  if (!data || data.length === 0) {
+    return (
+      <div style={{ height: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4B5563', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+        [ NO HISTORICAL TRADES FOUND // WAITING FOR STRATEGY EXECUTION ]
+      </div>
+    );
+  }
+
+  // Find min and max total P&L to scale Y axis dynamically
+  const pnlVals = data.map(d => d.total_pnl);
+  const maxVal = Math.max(...pnlVals, 1000.0);
+  const minVal = Math.min(...pnlVals, -1000.0);
+  
+  // Scale Y axis with padding
+  const yMax = Math.ceil(maxVal / 500) * 500 + 100;
+  const yMin = Math.floor(minVal / 500) * 500 - 100;
+  const yRange = yMax - yMin;
+
+  // SVG dimensions
+  const width = 500;
+  const height = 220;
+  const paddingLeft = 60;
+  const paddingRight = 10;
+  const paddingTop = 20;
+  const paddingBottom = 30;
+
+  const chartWidth = width - paddingLeft - paddingRight;
+  const chartHeight = height - paddingTop - paddingBottom;
+
+  const getX = (index) => paddingLeft + (index / (data.length - 1)) * chartWidth;
+  const getY = (val) => paddingTop + chartHeight - ((val - yMin) / yRange) * chartHeight;
+
+  // Generate SVG path string
+  const generatePath = () => {
+    return data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(d.total_pnl)}`).join(' ');
+  };
+
+  const zeroY = getY(0.0);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '220px' }}>
+      <svg className="chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+        {/* Horizontal Gridlines & Y-Axis ticks */}
+        {[0, 0.25, 0.5, 0.75, 1.0].map((ratio, i) => {
+          const val = Math.round(yMin + ratio * yRange);
+          const y = getY(val);
+          return (
+            <g key={i}>
+              <line className="chart-grid-line" x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} />
+              <text className="chart-label" x={paddingLeft - 8} y={y + 3} textAnchor="end">
+                {val >= 0 ? `+$${val}` : `-$${Math.abs(val)}`}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Zero Line */}
+        {zeroY >= paddingTop && zeroY <= paddingTop + chartHeight && (
+          <line x1={paddingLeft} y1={zeroY} x2={width - paddingRight} y2={zeroY} stroke="rgba(255, 255, 255, 0.15)" strokeWidth="1.5" strokeDasharray="4 4" />
+        )}
+
+        {/* X-Axis Ticks */}
+        {data.map((d, i) => {
+          if (i % Math.ceil(data.length / 5) !== 0 && i !== data.length - 1) return null;
+          const x = getX(i);
+          const timeStr = d.timestamp.split('T')[1]?.substring(0, 5) || d.timestamp.substring(5, 10);
+          return (
+            <g key={i}>
+              <line className="chart-grid-line" x1={x} y1={paddingTop} x2={x} y2={paddingTop + chartHeight} />
+              <text className="chart-label" x={x} y={paddingTop + chartHeight + 16} textAnchor="middle">{timeStr}</text>
+            </g>
+          );
+        })}
+
+        {/* Axis Lines */}
+        <line className="chart-axis-line" x1={paddingLeft} y1={paddingTop} x2={paddingLeft} y2={paddingTop + chartHeight} />
+        <line className="chart-axis-line" x1={paddingLeft} y1={paddingTop + chartHeight} x2={width - paddingRight} y2={paddingTop + chartHeight} />
+
+        {/* P&L Line */}
+        <path d={generatePath()} fill="none" stroke="var(--color-bullish)" strokeWidth="2" className="glow-green" />
+      </svg>
+    </div>
+  );
+}
+
+// ==========================================
 // MAIN DASHBOARD APPLICATION COMPONENT
 // ==========================================
 export default function App() {
@@ -251,6 +340,7 @@ export default function App() {
   const [sentimentTrends, setSentimentTrends] = useState([]);
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
+  const [portfolioHistory, setPortfolioHistory] = useState([]);
   
   // Real-time trading states
   const [showTradeGlow, setShowTradeGlow] = useState(false);
@@ -325,6 +415,13 @@ export default function App() {
       if (abRes.ok) {
         const abData = await abRes.json();
         setAbStats(abData.data || []);
+      }
+
+      // Portfolio History
+      const historyRes = await fetch('http://localhost:8000/api/v1/portfolio/history');
+      if (historyRes.ok) {
+        const historyData = await historyRes.json();
+        setPortfolioHistory(historyData.data || []);
       }
     } catch (e) {
       console.error("Rest queries failed", e);
@@ -792,6 +889,15 @@ export default function App() {
             <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', margin: 0, textAlign: 'center' }}>
               Deterministic hash routing ensures replay consistency.
             </p>
+          </div>
+
+          {/* PORTFOLIO HISTORICAL P&L PATH CARD */}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h2 style={{ fontSize: '14px', letterSpacing: '0.05em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '10px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
+              <span>PORTFOLIO HISTORICAL P&L PATH</span>
+              <span className="badge badge-bullish" style={{ fontSize: '9px' }}>REAL-TIME VALUE</span>
+            </h2>
+            <PnLHistoryChart data={portfolioHistory} />
           </div>
 
           {/* LATENCY percentiles */}

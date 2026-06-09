@@ -173,3 +173,29 @@ async def test_worker_insufficient_capital():
     payload = json.loads(args[1])
     assert payload["type"] == "insufficient_capital"
     assert payload["data"]["ticker"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_portfolio_service_history():
+    mock_db = MagicMock()
+    mock_db.query_raw_trades = AsyncMock(return_value=[
+        {"ticker": "AAPL", "action": "buy", "quantity": 10, "price": 200.0, "executed_at": "2026-06-05T08:54:33Z"},
+        {"ticker": "AAPL", "action": "sell", "quantity": 10, "price": 220.0, "executed_at": "2026-06-05T09:19:15Z"},
+    ])
+    
+    mock_price_feed = MagicMock()
+    
+    service = PortfolioService(mock_db, mock_price_feed)
+    history = await service.get_portfolio_history()
+    
+    assert len(history) == 3
+    # Initial point
+    assert history[0]["portfolio_value"] == 100000.0
+    # Buy step
+    assert history[1]["portfolio_value"] == 100000.0
+    assert history[1]["cash"] == 98000.0
+    # Sell step
+    assert history[2]["portfolio_value"] == 100200.0
+    assert history[2]["cash"] == 100200.0
+    assert history[2]["realized_pnl"] == 200.0
+

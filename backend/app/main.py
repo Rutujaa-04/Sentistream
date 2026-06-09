@@ -416,6 +416,19 @@ async def get_portfolio_summary():
         logger.error("Failed to reconstruct portfolio summary", error=str(e))
         raise HTTPException(status_code=500, detail="Portfolio reconstruction failed.")
 
+@app.get("/api/v1/portfolio/history")
+async def get_portfolio_history():
+    """Retrieves the step-by-step historical portfolio valuation and P&L metrics."""
+    try:
+        data = await portfolio_service.get_portfolio_history()
+        return {
+            "status": "ok",
+            "data": data
+        }
+    except Exception as e:
+        logger.error("Failed to retrieve portfolio history", error=str(e))
+        raise HTTPException(status_code=500, detail="Portfolio history retrieval failed.")
+
 # ==========================================
 # WEBSOCKET STREAMING GATEWAY
 # ==========================================

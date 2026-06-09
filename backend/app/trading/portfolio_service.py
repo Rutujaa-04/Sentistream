@@ -134,3 +134,81 @@ class PortfolioService:
             win_rate=state["win_rate"]
         )
         return state
+
+    async def get_portfolio_history(self) -> list:
+        """
+        Reconstructs the historical portfolio valuation and P&L path
+        step-by-step for each transaction.
+        """
+        logger.info("Reconstructing historical portfolio P&L path...")
+        raw_trades = await self.db.query_raw_trades()
+        
+        history = []
+        
+        # Add initial starting point
+        history.append({
+            "timestamp": "2026-06-01T00:00:00Z",
+            "portfolio_value": float(settings.INITIAL_PORTFOLIO_CAPITAL),
+            "cash": float(settings.INITIAL_PORTFOLIO_CAPITAL),
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "total_pnl": 0.0
+        })
+        
+        cash = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+        positions = {}
+        realized_pnl = 0.0
+        
+        for trade in raw_trades:
+            ticker = trade["ticker"].strip().upper()
+            action = trade["action"].lower()
+            quantity = int(trade["quantity"])
+            price = float(trade["price"])
+            executed_at = trade["executed_at"]
+            
+            if action == "buy":
+                cost = quantity * price
+                cash -= cost
+                if ticker not in positions:
+                    positions[ticker] = {"shares": 0, "total_cost": 0.0, "last_price": 0.0}
+                positions[ticker]["shares"] += quantity
+                positions[ticker]["total_cost"] += cost
+                positions[ticker]["last_price"] = price
+            elif action == "sell":
+                if ticker in positions and positions[ticker]["shares"] > 0:
+                    held = positions[ticker]["shares"]
+                    avg_cost = positions[ticker]["total_cost"] / held
+                    sell_qty = min(quantity, held)
+                    proceeds = sell_qty * price
+                    cash += proceeds
+                    
+                    trade_cost_basis = sell_qty * avg_cost
+                    trade_realized_pnl = proceeds - trade_cost_basis
+                    realized_pnl += trade_realized_pnl
+                    
+                    positions[ticker]["shares"] -= sell_qty
+                    positions[ticker]["total_cost"] -= trade_cost_basis
+                    positions[ticker]["last_price"] = price
+                    
+                    if positions[ticker]["shares"] <= 0:
+                        positions.pop(ticker)
+            
+            # Recompute total position value and unrealized pnl
+            positions_value = 0.0
+            unrealized_pnl = 0.0
+            for tk, pos in positions.items():
+                mv = pos["shares"] * pos["last_price"]
+                positions_value += mv
+                unrealized_pnl += (mv - pos["total_cost"])
+                
+            step_val = cash + positions_value
+            history.append({
+                "timestamp": executed_at.isoformat() + "Z" if hasattr(executed_at, "isoformat") else str(executed_at),
+                "portfolio_value": round(step_val, 2),
+                "cash": round(cash, 2),
+                "realized_pnl": round(realized_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "total_pnl": round(step_val - float(settings.INITIAL_PORTFOLIO_CAPITAL), 2)
+            })
+            
+        return history
