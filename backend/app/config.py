@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 class Settings(BaseModel):
     # API Keys
     FINNHUB_API_KEY: str = Field(default="")
+    ALPACA_API_KEY: str = Field(default="")
+    ALPACA_API_SECRET: str = Field(default="")
 
     # Message Broker
     REDIS_URL: str = Field(default="redis://localhost:6379")
@@ -29,6 +31,7 @@ class Settings(BaseModel):
 
     # Paper Trading Strategy Selection
     TRADING_STRATEGY: str = Field(default="threshold")
+    TRADING_ENGINE: str = Field(default="simulated")
     INITIAL_PORTFOLIO_CAPITAL: float = Field(default=100000.0)
     FORCE_TRADE_COST_USD: float = Field(default=0.0)
 

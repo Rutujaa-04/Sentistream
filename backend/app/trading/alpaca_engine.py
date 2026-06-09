@@ -29,8 +29,8 @@ class AlpacaExecutionEngine(BaseExecutionEngine):
         self.session: Optional[aiohttp.ClientSession] = None
         
         # Alpaca Paper Trading Credentials
-        self.api_key = os.environ.get("ALPACA_API_KEY", "")
-        self.api_secret = os.environ.get("ALPACA_API_SECRET", "")
+        self.api_key = settings.ALPACA_API_KEY
+        self.api_secret = settings.ALPACA_API_SECRET
         self.base_url = "https://paper-api.alpaca.markets/v2"
 
     async def initialize(self):

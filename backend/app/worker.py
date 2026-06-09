@@ -117,7 +117,7 @@ class ConsumerWorker:
         )
         
         # 6. Initialize Hexagonal Trading Adapter based on config
-        engine_type = os.environ.get("TRADING_ENGINE", "simulated").lower()
+        engine_type = settings.TRADING_ENGINE.lower()
         if engine_type == "alpaca":
             self.trading_engine = AlpacaExecutionEngine()
         else:
@@ -195,6 +195,8 @@ class ConsumerWorker:
             # 1. Deserialize message payload
             headline_id = fields["id"]
             ticker = fields["ticker"].strip().upper()
+            if not ticker:
+                raise ValueError("Ticker symbol cannot be empty")
             headline_text = fields["headline_text"]
             source = fields["source"]
             ingested_at = float(fields["ingested_at"])
