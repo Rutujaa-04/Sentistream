@@ -341,6 +341,19 @@ async def get_recent_headlines(
         logger.error("Failed to query recent headlines", error=str(e))
         raise HTTPException(status_code=500, detail="ClickHouse query failed.")
 
+@app.get("/api/v1/ab-stats")
+async def get_ab_stats():
+    """Queries ClickHouse for aggregate latency and counts grouped by model version."""
+    try:
+        data = await db.query_ab_stats()
+        return {
+            "status": "ok",
+            "data": data
+        }
+    except Exception as e:
+        logger.error("Failed to query A/B stats", error=str(e))
+        raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+
 @app.get("/api/v1/latency-percentiles")
 async def get_latency_percentiles(window: str = Query(default="1h", pattern="^(1h|6h|24h)$")):
     """Retrieves real-time processing latency benchmarks aggregated by 1-minute buckets."""

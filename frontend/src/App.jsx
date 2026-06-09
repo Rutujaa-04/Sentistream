@@ -250,6 +250,7 @@ export default function App() {
   const [latencyHistory, setLatencyHistory] = useState([]);
   const [sentimentTrends, setSentimentTrends] = useState([]);
   const [portfolio, setPortfolio] = useState(null);
+  const [abStats, setAbStats] = useState([]);
   
   // Real-time trading states
   const [showTradeGlow, setShowTradeGlow] = useState(false);
@@ -317,6 +318,13 @@ export default function App() {
       if (portRes.ok) {
         const portData = await portRes.json();
         setPortfolio(portData);
+      }
+
+      // Model A/B Performance Stats
+      const abRes = await fetch('http://localhost:8000/api/v1/ab-stats');
+      if (abRes.ok) {
+        const abData = await abRes.json();
+        setAbStats(abData.data || []);
       }
     } catch (e) {
       console.error("Rest queries failed", e);
@@ -573,6 +581,14 @@ export default function App() {
                         <span className={`badge ${item.sentiment === 'positive' ? 'badge-bullish' : item.sentiment === 'negative' ? 'badge-bearish' : 'badge-neutral'}`}>
                           {item.sentiment} ({Math.round(item.confidence * 100)}%)
                         </span>
+                        <span className="badge" style={{
+                          backgroundColor: item.model_version === 'v2' ? 'rgba(245, 158, 11, 0.05)' : 'rgba(59, 130, 246, 0.05)',
+                          color: item.model_version === 'v2' ? 'var(--color-drift)' : 'var(--color-neutral)',
+                          border: `1px solid ${item.model_version === 'v2' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(59, 130, 246, 0.25)'}`,
+                          marginLeft: '4px'
+                        }}>
+                          {(item.model_version || 'v1').toUpperCase()}
+                        </span>
                       </div>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)' }}>
                         {item.processed_at?.split('T')[1]?.substring(0, 8) || ''}
@@ -702,6 +718,82 @@ export default function App() {
         {/* RIGHT COLUMN: ANALYTICS & DRIFT LOG */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
+          {/* MODEL A/B PERFORMANCE COMPARISON CARD */}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h2 style={{ fontSize: '14px', letterSpacing: '0.05em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '10px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
+              <span>MODEL A/B PERFORMANCE (CLICKHOUSE OLAP)</span>
+              <span className="badge badge-neutral" style={{ fontSize: '9px', borderColor: 'var(--border-glow)' }}>80/20 SPLIT ACTIVE</span>
+            </h2>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              {['v1', 'v2'].map(version => {
+                const stats = abStats.find(s => s.model_version === version) || {
+                  model_version: version,
+                  total_count: 0,
+                  avg_latency_ms: 0,
+                  p50_ms: 0,
+                  p95_ms: 0,
+                  p99_ms: 0
+                };
+                
+                const isV2 = version === 'v2';
+                const accentColor = isV2 ? 'var(--color-drift)' : 'var(--color-neutral)';
+                const bgLight = isV2 ? 'rgba(245, 158, 11, 0.02)' : 'rgba(59, 130, 246, 0.02)';
+                const borderLightCol = isV2 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)';
+                
+                return (
+                  <div key={version} style={{ 
+                    padding: '14px', 
+                    borderRadius: '8px', 
+                    background: bgLight, 
+                    border: `1px solid ${borderLightCol}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${borderLightCol}`, paddingBottom: '6px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#FFF', fontFamily: 'var(--font-mono)' }}>
+                        MODEL {version.toUpperCase()} {isV2 ? '(CHALLENGER)' : '(CHAMPION)'}
+                      </span>
+                      <span className="status-indicator online" style={{ backgroundColor: accentColor }} />
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px', fontFamily: 'var(--font-mono)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>EVALUATIONS:</span>
+                        <span style={{ color: '#FFF', fontWeight: 'bold' }}>{stats.total_count}</span>
+                      </div>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>AVG LATENCY:</span>
+                        <span style={{ color: accentColor, fontWeight: 'bold' }}>{stats.avg_latency_ms}ms</span>
+                      </div>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>p50:</span>
+                        <span style={{ color: '#FFF' }}>{stats.p50_ms}ms</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>p95:</span>
+                        <span style={{ color: '#FFF' }}>{stats.p95_ms}ms</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>p99:</span>
+                        <span style={{ color: 'var(--color-bearish)' }}>{stats.p99_ms}ms</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', margin: 0, textAlign: 'center' }}>
+              Deterministic hash routing ensures replay consistency.
+            </p>
+          </div>
+
           {/* LATENCY percentiles */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '14px', letterSpacing: '0.05em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '10px', display: 'flex', justifyContent: 'space-between' }}>

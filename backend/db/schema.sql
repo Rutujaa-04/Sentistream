@@ -60,3 +60,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 ) ENGINE = MergeTree()
 ORDER BY (ticker, executed_at)
 SETTINGS index_granularity = 8192;
+
+-- Migration: Add model_version column to headlines & telemetry
+ALTER TABLE headlines ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
+ALTER TABLE inference_telemetry ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
+

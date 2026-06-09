@@ -190,6 +190,7 @@ class ConsumerWorker:
     async def process_message(self, message_id: str, fields: dict):
         """Orchestrates the lifecycle of a single financial news headline message."""
         t_total_start = time.perf_counter()
+        model_version = "v1"
         
         try:
             # 1. Deserialize message payload
@@ -201,15 +202,22 @@ class ConsumerWorker:
             source = fields["source"]
             ingested_at = float(fields["ingested_at"])
             
+            # Deterministic 80/20 A/B split based on headline ID hash
+            try:
+                clean_hex = headline_id[:8].replace("-", "")
+                model_version = "v1" if int(clean_hex, 16) % 10 < 8 else "v2"
+            except Exception:
+                model_version = "v1"
+            
             # 2. Run Quantized ONNX Inference
-            inference = self.model.infer(headline_text)
+            inference = self.model.infer(headline_text, model_version=model_version)
             
             # Observe inference latencies in Prometheus (converting ms to seconds)
-            INFERENCE_LATENCY.observe(inference["latency_ms"] / 1000.0)
-            TOKENIZATION_LATENCY.observe(inference["tokenization_latency_ms"] / 1000.0)
+            INFERENCE_LATENCY.labels(model_version=model_version).observe(inference["latency_ms"] / 1000.0)
+            TOKENIZATION_LATENCY.labels(model_version=model_version).observe(inference["tokenization_latency_ms"] / 1000.0)
             
             # Increment pipeline processed counter
-            HEADLINES_PROCESSED.labels(ticker=ticker, sentiment=inference["label"], status="success").inc()
+            HEADLINES_PROCESSED.labels(ticker=ticker, sentiment=inference["label"], status="success", model_version=model_version).inc()
             
             # 3. Calculate Statistical Sentiment Drift
             # Convert label to numeric score for math calculations: pos=1.0, neg=-1.0, neu=0.0
@@ -241,7 +249,8 @@ class ConsumerWorker:
                 sentiment_label=inference["label"],
                 confidence_score=inference["confidence"],
                 ingested_at=ingested_at,
-                processed_at=processed_at
+                processed_at=processed_at,
+                model_version=model_version
             )
             
             # B. Write Telemetry Metrics
@@ -253,7 +262,8 @@ class ConsumerWorker:
                 inference_latency_ms=inference["latency_ms"],
                 tokenization_latency_ms=inference["tokenization_latency_ms"],
                 total_latency_ms=total_latency,
-                worker_id=self.worker_name
+                worker_id=self.worker_name,
+                model_version=model_version
             )
             
             # C. Write Drift Alert if Z-score exceeded threshold
@@ -411,7 +421,8 @@ class ConsumerWorker:
                     "confidence": inference["confidence"],
                     "latency_ms": round(inference["latency_ms"], 2),
                     "source": source,
-                    "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                    "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at)),
+                    "model_version": model_version
                 }
             }
             await self.redis_client.publish("sentistream:sentiment_events", json.dumps(event_payload))
@@ -435,11 +446,11 @@ class ConsumerWorker:
 
         except KeyError as e:
             ticker_label = fields.get("ticker", "UNKNOWN").strip().upper() if isinstance(fields, dict) else "UNKNOWN"
-            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error").inc()
+            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error", model_version=model_version).inc()
             await self.route_to_dlq(message_id, fields, f"Missing required payload key: {str(e)}")
         except Exception as e:
             ticker_label = fields.get("ticker", "UNKNOWN").strip().upper() if isinstance(fields, dict) else "UNKNOWN"
-            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error").inc()
+            HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error", model_version=model_version).inc()
             await self.route_to_dlq(message_id, fields, f"Processing execution failed: {str(e)}")
 
     async def record_queue_backlogs(self):

@@ -92,13 +92,14 @@ class ClickHouseDatabase:
         sentiment_label: str,
         confidence_score: float,
         ingested_at: float,
-        processed_at: float
+        processed_at: float,
+        model_version: str = "v1"
     ):
         """Inserts a sentiment-analyzed financial news headline."""
         query = """
             INSERT INTO headlines (
                 id, ticker, headline_text, source, sentiment_label, 
-                confidence_score, ingested_at, processed_at
+                confidence_score, ingested_at, processed_at, model_version
             ) VALUES
         """
         # Convert floats to clickhouse-compatible timestamps
@@ -113,7 +114,8 @@ class ClickHouseDatabase:
             sentiment_label,
             confidence_score,
             ingested_dt,
-            processed_dt
+            processed_dt,
+            model_version
         )
         
         await self.execute(query, [row])
@@ -124,13 +126,14 @@ class ClickHouseDatabase:
         inference_latency_ms: float,
         tokenization_latency_ms: float,
         total_latency_ms: float,
-        worker_id: str
+        worker_id: str,
+        model_version: str = "v1"
     ):
         """Inserts pipeline latency telemetry for system profiling."""
         query = """
             INSERT INTO inference_telemetry (
                 headline_id, inference_latency_ms, tokenization_latency_ms, 
-                total_latency_ms, worker_id, recorded_at
+                total_latency_ms, worker_id, recorded_at, model_version
             ) VALUES
         """
         recorded_dt = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -140,7 +143,8 @@ class ClickHouseDatabase:
             tokenization_latency_ms,
             total_latency_ms,
             worker_id,
-            recorded_dt
+            recorded_dt,
+            model_version
         )
         await self.execute(query, [row])
 
@@ -278,12 +282,13 @@ class ClickHouseDatabase:
         where_clause = ""
         if ticker:
             where_clause = f"WHERE h.ticker = '{ticker.upper()}'"
-
+ 
         query = f"""
             SELECT 
                 h.id, h.ticker, h.headline_text, h.source, h.sentiment_label, 
                 h.confidence_score, h.processed_at,
-                COALESCE(t.inference_latency_ms, 0.0) AS latency_ms
+                COALESCE(t.inference_latency_ms, 0.0) AS latency_ms,
+                h.model_version
             FROM headlines h
             LEFT JOIN inference_telemetry t ON h.id = t.headline_id
             {where_clause}
@@ -293,7 +298,7 @@ class ClickHouseDatabase:
         rows = await self.execute(query)
         
         results = []
-        for hid, tk, text, source, sentiment, confidence, processed_at, latency in rows:
+        for hid, tk, text, source, sentiment, confidence, processed_at, latency, model_version in rows:
             results.append({
                 "id": str(hid),
                 "ticker": tk,
@@ -302,7 +307,8 @@ class ClickHouseDatabase:
                 "sentiment": sentiment,
                 "confidence": float(confidence),
                 "latency_ms": round(float(latency), 2),
-                "processed_at": processed_at.isoformat() + "Z" if hasattr(processed_at, "isoformat") else str(processed_at)
+                "processed_at": processed_at.isoformat() + "Z" if hasattr(processed_at, "isoformat") else str(processed_at),
+                "model_version": model_version if model_version else "v1"
             })
         return results
 
@@ -359,6 +365,33 @@ class ClickHouseDatabase:
                 "signal_source": str(sig_src),
                 "confidence_score": float(conf),
                 "executed_at": exec_at.isoformat() + "Z" if hasattr(exec_at, "isoformat") else str(exec_at)
+            })
+        return results
+
+    async def query_ab_stats(self) -> List[Dict[str, Any]]:
+        """Queries ClickHouse for aggregate latency and counts grouped by model version."""
+        query = """
+            SELECT 
+                COALESCE(NULLIF(model_version, ''), 'v1') AS version,
+                count(*) AS total_count,
+                avg(inference_latency_ms) AS avg_latency_ms,
+                quantile(0.5)(inference_latency_ms) AS p50_ms,
+                quantile(0.95)(inference_latency_ms) AS p95_ms,
+                quantile(0.99)(inference_latency_ms) AS p99_ms
+            FROM inference_telemetry
+            GROUP BY version
+            ORDER BY version ASC
+        """
+        rows = await self.execute(query)
+        results = []
+        for version, total_count, avg_latency, p50, p95, p99 in rows:
+            results.append({
+                "model_version": version,
+                "total_count": int(total_count),
+                "avg_latency_ms": round(float(avg_latency), 2),
+                "p50_ms": round(float(p50), 2),
+                "p95_ms": round(float(p95), 2),
+                "p99_ms": round(float(p99), 2)
             })
         return results
 

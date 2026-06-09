@@ -4,19 +4,21 @@ from prometheus_client import Counter, Gauge, Histogram
 INFERENCE_LATENCY = Histogram(
     "sentistream_inference_latency_seconds",
     "FinBERT model inference latency in seconds",
+    ["model_version"],
     buckets=[0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05, 0.075, 0.1, 0.25]
 )
 
 TOKENIZATION_LATENCY = Histogram(
     "sentistream_tokenization_latency_seconds",
     "Model text tokenization latency in seconds",
+    ["model_version"],
     buckets=[0.0005, 0.001, 0.002, 0.003, 0.004, 0.005, 0.0075, 0.01, 0.025]
 )
 
 HEADLINES_PROCESSED = Counter(
     "sentistream_headlines_processed_total",
     "Total headlines processed by the pipeline",
-    ["ticker", "sentiment", "status"]
+    ["ticker", "sentiment", "status", "model_version"]
 )
 
 # 2. Sentiment Drift Monitoring Metrics

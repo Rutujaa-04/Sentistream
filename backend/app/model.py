@@ -33,11 +33,32 @@ class SentimentModel:
             
         logger.info("Initializing Sentiment ONNX Model...")
         
-        # Determine path to the dynamic INT8 quantized model
-        # Base models path: root/models
+        # Determine path to the dynamic INT8 quantized models
         workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.model_path = os.path.join(workspace_dir, "models", "finbert-int8.onnx")
+        models_dir = os.path.join(workspace_dir, "models")
         
+        self.model_v1_path = os.path.join(models_dir, "finbert-int8-v1.onnx")
+        self.model_v2_path = os.path.join(models_dir, "finbert-int8-v2.onnx")
+        
+        # Populate model registry automatically if versions are missing
+        base_model_path = os.path.join(models_dir, "finbert-int8.onnx")
+        if not os.path.exists(self.model_v1_path) or not os.path.exists(self.model_v2_path):
+            if os.path.exists(base_model_path):
+                import shutil
+                if not os.path.exists(self.model_v1_path):
+                    logger.info("Copying base model to finbert-int8-v1.onnx for registry setup...")
+                    shutil.copy2(base_model_path, self.model_v1_path)
+                if not os.path.exists(self.model_v2_path):
+                    logger.info("Copying base model to finbert-int8-v2.onnx for registry setup...")
+                    shutil.copy2(base_model_path, self.model_v2_path)
+            else:
+                logger.error("Base quantized ONNX model asset not found", path=base_model_path)
+                raise FileNotFoundError(
+                    f"ONNX Model not found at {base_model_path}. "
+                    "Please run python backend/ml/train.py and python backend/ml/export_onnx.py first, "
+                    "or place a pre-compiled 'finbert-int8.onnx' in the models/ directory."
+                )
+
         # Fallback to general pre-trained if fine-tuned is not compiled yet
         # (Allows the pipeline to work even before training runs, ensuring demo stability)
         self.tokenizer_path = os.path.join(workspace_dir, "models", "checkpoint-best")
@@ -59,27 +80,24 @@ class SentimentModel:
             logger.error("Failed to load tokenizer", error=str(e))
             raise e
 
-        # Initialize ONNX Runtime Inference Session
-        if not os.path.exists(self.model_path):
-            logger.error("Quantized ONNX model asset not found", path=self.model_path)
-            # Create a clear instruction for the user
-            raise FileNotFoundError(
-                f"ONNX Model not found at {self.model_path}. "
-                "Please run python backend/ml/train.py and python backend/ml/export_onnx.py first, "
-                "or place a pre-compiled 'finbert-int8.onnx' in the models/ directory."
-            )
-
         try:
             # Set thread constraints optimized for CPU inference workloads
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = 1
             opts.inter_op_num_threads = 1
             
-            # Load ONNX Inference Session on CPU execution provider
-            self.session = ort.InferenceSession(self.model_path, opts, providers=["CPUExecutionProvider"])
-            logger.info("ONNX Inference Session initialized successfully", model_path=self.model_path)
+            # Load ONNX Inference Sessions on CPU execution provider
+            self.sessions = {
+                "v1": ort.InferenceSession(self.model_v1_path, opts, providers=["CPUExecutionProvider"]),
+                "v2": ort.InferenceSession(self.model_v2_path, opts, providers=["CPUExecutionProvider"])
+            }
+            logger.info(
+                "ONNX Inference Sessions initialized successfully",
+                model_v1=self.model_v1_path,
+                model_v2=self.model_v2_path
+            )
         except Exception as e:
-            logger.error("Failed to initialize ONNX Inference Session", error=str(e))
+            logger.error("Failed to initialize ONNX Inference Sessions", error=str(e))
             raise e
 
         # FinBERT labels mapping: 0=positive, 1=negative, 2=neutral
@@ -92,7 +110,7 @@ class SentimentModel:
         # Return True for standard demo setups
         return True
 
-    def infer(self, text: str) -> dict:
+    def infer(self, text: str, model_version: str = "v1") -> dict:
         """Executes INT8-quantized BERT sentiment classification on CPU."""
         t_start = time.perf_counter()
         
@@ -104,7 +122,8 @@ class SentimentModel:
                 "confidence": 0.0,
                 "latency_ms": 0.0,
                 "tokenization_latency_ms": 0.0,
-                "total_latency_ms": 0.0
+                "total_latency_ms": 0.0,
+                "model_version": model_version
             }
 
         # 2. Tokenize Input Text (Max BERT tokens: 128 for financial headlines)
@@ -127,8 +146,12 @@ class SentimentModel:
         }
 
         # 4. Execute ONNX Inference Run
+        if model_version not in self.sessions:
+            model_version = "v1"
+        session = self.sessions[model_version]
+
         t_inference_start = time.perf_counter()
-        outputs = self.session.run(None, onnx_inputs)
+        outputs = session.run(None, onnx_inputs)
         t_inference_end = time.perf_counter()
         inference_latency = (t_inference_end - t_inference_start) * 1000.0
 
@@ -148,5 +171,6 @@ class SentimentModel:
             "confidence": round(confidence, 4),
             "latency_ms": round(inference_latency, 2),
             "tokenization_latency_ms": round(tokenization_latency, 2),
-            "total_latency_ms": round(total_latency, 2)
+            "total_latency_ms": round(total_latency, 2),
+            "model_version": model_version
         }

@@ -39,3 +39,14 @@ This file documents the key design decisions, trade-offs, and rationale behind S
   - When a ticker goes quiet (no headlines processed for over 60 seconds), the background queue poller in the worker daemon explicitly sets its Z-score gauge to `0.0` and resets the detector's last Z-score value.
 - **Rationale**:
   - Prevents stale Z-score metrics from persisting on the Grafana dashboard for quiet tickers, providing accurate MLOps telemetry.
+
+---
+
+## 5. Dual ONNX Inference Sessions (Memory & Cold-Start Tradeoff)
+- **Context**: Setting up the Model Registry and A/B Testing framework requires routing headline inference to different versioned ONNX model models (`v1` and `v2`).
+- **Decision**: Accept loading two separate `InferenceSession` instances (totaling ~210MB RAM footprint) concurrently within the background worker process at boot.
+- **Rationale**:
+  - Memory consumption of 210MB is well within acceptable limits for the local Docker compose and standard host machines.
+  - Initializing both models at worker startup avoids runtime "first-request" latency degradation for either version.
+  - While it slightly increases the initial cold-start duration of the worker container, it guarantees stable, deterministic p99 latency benchmarks (< 50ms) for both user-facing endpoints immediately from the first live headline processed.
+
