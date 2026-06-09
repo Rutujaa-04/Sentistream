@@ -74,13 +74,13 @@ h1, h2, h3, h4 {
 
 /* Pulsing micro-animations */
 @keyframes pulse-green {
-  0%, 100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 2px var(--color-bullish)); }
-  50% { transform: scale(1.1); opacity: 0.7; filter: drop-shadow(0 0 8px var(--color-bullish)); }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.7; }
 }
 
 @keyframes pulse-amber {
-  0%, 100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 2px var(--color-drift)); }
-  50% { transform: scale(1.15); opacity: 0.6; filter: drop-shadow(0 0 10px var(--color-drift)); }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.6; }
 }
 
 .status-indicator {
@@ -97,7 +97,6 @@ h1, h2, h3, h4 {
 
 .status-indicator.offline {
   background-color: var(--color-bearish);
-  filter: drop-shadow(0 0 4px var(--color-bearish));
 }
 
 .status-indicator.warning {
@@ -200,16 +199,16 @@ h1, h2, h3, h4 {
   font-size: 10px;
 }
 
-/* Glow filters for chart paths */
-.glow-blue { filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.6)); }
-.glow-red { filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.6)); }
-.glow-green { filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.6)); }
-.glow-amber { filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6)); }
+/* Glow filters for chart paths (disabled for clean flat look) */
+.glow-blue { }
+.glow-red { }
+.glow-green { }
+.glow-amber { }
 
 /* Quantitative Trading Animations */
 @keyframes border-flash-blue {
-  0%, 100% { border-color: var(--border-light); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4); }
-  50% { border-color: var(--color-neutral); box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
+  0%, 100% { border-color: var(--border-light); }
+  50% { border-color: var(--color-neutral); }
 }
 
 .glow-trade-flash {
@@ -217,6 +216,6 @@ h1, h2, h3, h4 {
 }
 
 @keyframes pulse-red {
-  0%, 100% { opacity: 1; filter: drop-shadow(0 0 2px var(--color-bearish)); }
-  50% { opacity: 0.6; filter: drop-shadow(0 0 8px var(--color-bearish)); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
