@@ -58,6 +58,8 @@ class ConsumerWorker:
         self.portfolio_cash = float(settings.INITIAL_PORTFOLIO_CAPITAL)
         self.portfolio_positions: Dict[str, Dict[str, Any]] = {}  # ticker -> {"shares": int, "avg_price": float}
         self.total_portfolio_value = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+        self.strategy_mode = "long_only"
+        self.last_settings_read_time = 0.0
         
         # Registry of drift detectors isolated by ticker to prevent contamination
         self.drift_detectors: Dict[str, DriftDetector] = {}
@@ -126,6 +128,29 @@ class ConsumerWorker:
         
         # 7. Ensure Redis Consumer Group exists
         await self.setup_consumer_group()
+
+        # 8. Warm strategy settings cache
+        try:
+            mode = await self.redis_client.get("sentistream:settings:strategy_mode")
+            self.strategy_mode = mode if mode else "long_only"
+        except Exception as e:
+            logger.error("Failed to warm strategy settings cache, using default long_only", error=str(e))
+            self.strategy_mode = "long_only"
+        self.last_settings_read_time = time.time()
+
+    async def get_strategy_mode(self) -> str:
+        """Helper to retrieve cached strategy mode or fetch from Redis if TTL expired."""
+        now = time.time()
+        if now - self.last_settings_read_time > 30.0:
+            try:
+                mode = await self.redis_client.get("sentistream:settings:strategy_mode")
+                if mode:
+                    self.strategy_mode = mode
+                self.last_settings_read_time = now
+                logger.info("Refreshed strategy settings cache", strategy_mode=self.strategy_mode)
+            except Exception as e:
+                logger.error("Failed to refresh strategy settings, using cached value", strategy_mode=self.strategy_mode, error=str(e))
+        return self.strategy_mode
 
     async def setup_consumer_group(self):
         """Idempotently creates the Redis Stream consumer group."""
@@ -291,81 +316,136 @@ class ConsumerWorker:
             trade_action = self.strategy.should_trade(ticker, inference["label"], inference["confidence"])
             if trade_action:
                 current_price = await self.price_feed.get_price(ticker)
+                strategy_mode = await self.get_strategy_mode()
+                
+                # Check current position sign
+                current_shares = 0
+                if ticker in self.portfolio_positions:
+                    current_shares = self.portfolio_positions[ticker]["shares"]
                 
                 if trade_action == "buy":
-                    # Allocate 5% of total capital per trade
-                    trade_size = 0.05 * self.total_portfolio_value
-                    qty = int(trade_size / current_price)
-                    required_cost = qty * current_price
-
-                    # Cost override to simulate capital depletion (test-only)
-                    if settings.FORCE_TRADE_COST_USD > 0.0:
-                        required_cost = settings.FORCE_TRADE_COST_USD
-                    
-                    if qty <= 0 or self.portfolio_cash < required_cost:
-                        logger.warning(
-                            "Insufficient capital to execute buy order",
-                            ticker=ticker,
-                            required_cash=round(required_cost, 2),
-                            available_cash=round(self.portfolio_cash, 2),
-                            quantity=qty
-                        )
-                        # Publish warning to Redis Pub/Sub so dashboard can display it
-                        warning_payload = {
-                            "type": "insufficient_capital",
-                            "data": {
-                                "ticker": ticker,
-                                "required_cash": round(required_cost, 2),
-                                "available_cash": round(self.portfolio_cash, 2)
+                    if strategy_mode == "long_short" and current_shares < 0:
+                        # COVER: Close the short position completely
+                        qty = abs(current_shares)
+                        required_cost = qty * current_price
+                        
+                        # Cost override to simulate capital depletion (test-only)
+                        if settings.FORCE_TRADE_COST_USD > 0.0:
+                            required_cost = settings.FORCE_TRADE_COST_USD
+                            
+                        if qty <= 0 or self.portfolio_cash < required_cost:
+                            logger.warning(
+                                "Insufficient capital to execute cover order",
+                                ticker=ticker,
+                                required_cash=round(required_cost, 2),
+                                available_cash=round(self.portfolio_cash, 2),
+                                quantity=qty
+                            )
+                        else:
+                            trade_id = await self.trading_engine.execute_order(
+                                ticker=ticker,
+                                action="buy",
+                                quantity=qty,
+                                price_at_signal=current_price,
+                                signal_source_id=headline_id,
+                                confidence_score=inference["confidence"]
+                            )
+                            # Update in-memory state incrementally
+                            self.portfolio_cash -= required_cost
+                            self.portfolio_positions.pop(ticker, None)
+                            
+                            # Update Prometheus metrics
+                            TRADES_EXECUTED.labels(ticker=ticker, action="buy").inc()
+                            PORTFOLIO_CASH.set(self.portfolio_cash)
+                            POSITION_SHARES.labels(ticker=ticker).set(0)
+                            
+                            # Publish paper_trade event
+                            trade_payload = {
+                                "type": "paper_trade",
+                                "data": {
+                                    "trade_id": trade_id,
+                                    "ticker": ticker,
+                                    "action": "buy",
+                                    "quantity": qty,
+                                    "price": current_price,
+                                    "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                                }
                             }
-                        }
-                        await self.redis_client.publish("sentistream:sentiment_events", json.dumps(warning_payload))
+                            await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
                     else:
-                        trade_id = await self.trading_engine.execute_order(
-                            ticker=ticker,
-                            action="buy",
-                            quantity=qty,
-                            price_at_signal=current_price,
-                            signal_source_id=headline_id,
-                            confidence_score=inference["confidence"]
-                        )
-                        # Update in-memory state incrementally
-                        self.portfolio_cash -= required_cost
-                        if ticker not in self.portfolio_positions:
-                            self.portfolio_positions[ticker] = {"shares": 0, "avg_price": 0.0}
+                        # BUY LONG: Open or add to a long position (5% allocation)
+                        trade_size = 0.05 * self.total_portfolio_value
+                        qty = int(trade_size / current_price)
+                        required_cost = qty * current_price
                         
-                        held = self.portfolio_positions[ticker]["shares"]
-                        avg_price = self.portfolio_positions[ticker]["avg_price"]
-                        total_cost = (held * avg_price) + required_cost
-                        new_held = held + qty
-                        self.portfolio_positions[ticker] = {
-                            "shares": new_held,
-                            "avg_price": total_cost / new_held
-                        }
-                        
-                        # Update Prometheus metrics
-                        TRADES_EXECUTED.labels(ticker=ticker, action="buy").inc()
-                        PORTFOLIO_CASH.set(self.portfolio_cash)
-                        POSITION_SHARES.labels(ticker=ticker).set(new_held)
-                        
-                        # Publish paper_trade event
-                        trade_payload = {
-                            "type": "paper_trade",
-                            "data": {
-                                "trade_id": trade_id,
-                                "ticker": ticker,
-                                "action": "buy",
-                                "quantity": qty,
-                                "price": current_price,
-                                "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                        # Cost override to simulate capital depletion (test-only)
+                        if settings.FORCE_TRADE_COST_USD > 0.0:
+                            required_cost = settings.FORCE_TRADE_COST_USD
+                            
+                        if qty <= 0 or self.portfolio_cash < required_cost:
+                            logger.warning(
+                                "Insufficient capital to execute buy order",
+                                ticker=ticker,
+                                required_cash=round(required_cost, 2),
+                                available_cash=round(self.portfolio_cash, 2),
+                                quantity=qty
+                            )
+                            # Publish warning to Redis Pub/Sub so dashboard can display it
+                            warning_payload = {
+                                "type": "insufficient_capital",
+                                "data": {
+                                    "ticker": ticker,
+                                    "required_cash": round(required_cost, 2),
+                                    "available_cash": round(self.portfolio_cash, 2)
+                                }
                             }
-                        }
-                        await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
+                            await self.redis_client.publish("sentistream:sentiment_events", json.dumps(warning_payload))
+                        else:
+                            trade_id = await self.trading_engine.execute_order(
+                                ticker=ticker,
+                                action="buy",
+                                quantity=qty,
+                                price_at_signal=current_price,
+                                signal_source_id=headline_id,
+                                confidence_score=inference["confidence"]
+                            )
+                            # Update in-memory state incrementally
+                            self.portfolio_cash -= required_cost
+                            if ticker not in self.portfolio_positions:
+                                self.portfolio_positions[ticker] = {"shares": 0, "avg_price": 0.0}
+                                
+                            held = self.portfolio_positions[ticker]["shares"]
+                            avg_price = self.portfolio_positions[ticker]["avg_price"]
+                            total_cost = (held * avg_price) + required_cost
+                            new_held = held + qty
+                            self.portfolio_positions[ticker] = {
+                                "shares": new_held,
+                                "avg_price": total_cost / new_held
+                            }
+                            
+                            # Update Prometheus metrics
+                            TRADES_EXECUTED.labels(ticker=ticker, action="buy").inc()
+                            PORTFOLIO_CASH.set(self.portfolio_cash)
+                            POSITION_SHARES.labels(ticker=ticker).set(new_held)
+                            
+                            # Publish paper_trade event
+                            trade_payload = {
+                                "type": "paper_trade",
+                                "data": {
+                                    "trade_id": trade_id,
+                                    "ticker": ticker,
+                                    "action": "buy",
+                                    "quantity": qty,
+                                    "price": current_price,
+                                    "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                                }
+                            }
+                            await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
                 
                 elif trade_action == "sell":
-                    # Liquidate entire position of ticker
-                    if ticker in self.portfolio_positions and self.portfolio_positions[ticker]["shares"] > 0:
-                        qty = self.portfolio_positions[ticker]["shares"]
+                    if current_shares > 0:
+                        # LIQUIDATE: Close the long position completely
+                        qty = current_shares
                         trade_id = await self.trading_engine.execute_order(
                             ticker=ticker,
                             action="sell",
@@ -398,7 +478,58 @@ class ConsumerWorker:
                         }
                         await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
                     else:
-                        logger.info("Sell signal ignored because position is flat", ticker=ticker)
+                        if strategy_mode == "long_short":
+                            # SHORT: Open or add to a short position (5% allocation)
+                            trade_size = 0.05 * self.total_portfolio_value
+                            qty = int(trade_size / current_price)
+                            proceeds = qty * current_price
+                            
+                            if qty > 0:
+                                trade_id = await self.trading_engine.execute_order(
+                                    ticker=ticker,
+                                    action="sell",
+                                    quantity=qty,
+                                    price_at_signal=current_price,
+                                    signal_source_id=headline_id,
+                                    confidence_score=inference["confidence"]
+                                )
+                                # Update in-memory state incrementally: proceeds added to cash, shares decreases
+                                self.portfolio_cash += proceeds
+                                if ticker not in self.portfolio_positions:
+                                    self.portfolio_positions[ticker] = {"shares": 0, "avg_price": 0.0}
+                                    
+                                held_abs = abs(self.portfolio_positions[ticker]["shares"])
+                                avg_price = self.portfolio_positions[ticker]["avg_price"]
+                                total_cost = (held_abs * avg_price) + proceeds
+                                new_held_abs = held_abs + qty
+                                new_held = -new_held_abs
+                                self.portfolio_positions[ticker] = {
+                                    "shares": new_held,
+                                    "avg_price": total_cost / new_held_abs
+                                }
+                                
+                                # Update Prometheus metrics
+                                TRADES_EXECUTED.labels(ticker=ticker, action="sell").inc()
+                                PORTFOLIO_CASH.set(self.portfolio_cash)
+                                POSITION_SHARES.labels(ticker=ticker).set(new_held)
+                                
+                                # Publish paper_trade event
+                                trade_payload = {
+                                    "type": "paper_trade",
+                                    "data": {
+                                        "trade_id": trade_id,
+                                        "ticker": ticker,
+                                        "action": "sell",
+                                        "quantity": qty,
+                                        "price": current_price,
+                                        "executed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at))
+                                    }
+                                }
+                                await self.redis_client.publish("sentistream:sentiment_events", json.dumps(trade_payload))
+                            else:
+                                logger.warning("Short trade size quantity rounded down to 0", ticker=ticker)
+                        else:
+                            logger.info("Sell signal ignored because position is flat", ticker=ticker)
 
                 # Recompute total portfolio value
                 positions_mv = 0.0

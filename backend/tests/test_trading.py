@@ -199,3 +199,75 @@ async def test_portfolio_service_history():
     assert history[2]["cash"] == 100200.0
     assert history[2]["realized_pnl"] == 200.0
 
+
+@pytest.mark.asyncio
+async def test_portfolio_service_short_selling_reconstruction():
+    # 1. Setup mock ClickHouse database with the 4-step sequence
+    mock_db = MagicMock()
+    mock_db.query_raw_trades = AsyncMock(return_value=[
+        {"ticker": "AAPL", "action": "sell", "quantity": 10, "price": 200.0, "executed_at": "2026-06-05T08:00:00Z"},
+        {"ticker": "AAPL", "action": "buy", "quantity": 10, "price": 180.0, "executed_at": "2026-06-05T08:15:00Z"},
+        {"ticker": "AAPL", "action": "sell", "quantity": 10, "price": 200.0, "executed_at": "2026-06-05T08:30:00Z"},
+        {"ticker": "AAPL", "action": "buy", "quantity": 10, "price": 220.0, "executed_at": "2026-06-05T08:45:00Z"},
+    ])
+    
+    # 2. Setup mock PriceFeed
+    mock_price_feed = MagicMock()
+    mock_price_feed.get_price = AsyncMock(return_value=220.0) # current price doesn't affect closed positions
+    
+    service = PortfolioService(mock_db, mock_price_feed)
+    
+    # Check intermediate history step by step
+    history = await service.get_portfolio_history()
+    
+    assert len(history) == 5
+    
+    # Step 0 (Start): Capital = $100,000.00
+    assert history[0]["portfolio_value"] == 100000.0
+    assert history[0]["cash"] == 100000.0
+    assert history[0]["realized_pnl"] == 0.0
+    
+    # Step 1 (Trade 1: Short 10 AAPL at $200.00)
+    # Cash increases by proceeds ($2,000.00) to $102,000.00.
+    # Cumulative realized P&L is $0.00.
+    # Portfolio value = $102,000.00 (cash) - 10 * $200.00 (liability) = $100,000.00.
+    assert history[1]["cash"] == 102000.0
+    assert history[1]["portfolio_value"] == 100000.0
+    assert history[1]["realized_pnl"] == 0.0
+    
+    # Step 2 (Trade 2: Cover 10 AAPL at $180.00)
+    # Cash decreases by cover cost ($1,800.00) to $100,200.00.
+    # Realized P&L on cover: 10 * ($200.00 - $180.00) = +$200.00.
+    # Cumulative realized P&L becomes $200.00.
+    # Portfolio value = $100,200.00 (cash) + 0 (no positions) = $100,200.00.
+    assert history[2]["cash"] == 100200.0
+    assert history[2]["portfolio_value"] == 100200.0
+    assert history[2]["realized_pnl"] == 200.0
+    
+    # Step 3 (Trade 3: Short 10 AAPL at $200.00)
+    # Cash increases by proceeds ($2,000.00) to $102,200.00.
+    # Cumulative realized P&L remains $200.00.
+    # Portfolio value = $102,200.00 (cash) - 10 * $200.00 (liability) = $100,200.00.
+    assert history[3]["cash"] == 102200.0
+    assert history[3]["portfolio_value"] == 100200.0
+    assert history[3]["realized_pnl"] == 200.0
+    
+    # Step 4 (Trade 4: Cover 10 AAPL at $220.00)
+    # Cash decreases by cover cost ($2,200.00) to $100,000.00.
+    # Realized P&L on cover: 10 * ($200.00 - $220.00) = -$200.00.
+    # Cumulative realized P&L becomes $200.00 - $200.00 = $0.00.
+    # Portfolio value = $100,000.00 (cash) + 0 (no positions) = $100,000.00.
+    assert history[4]["cash"] == 100000.0
+    assert history[4]["portfolio_value"] == 100000.0
+    assert history[4]["realized_pnl"] == 0.0
+    
+    # Now check final summary reconstruction
+    state = await service.reconstruct_portfolio()
+    
+    assert state["cash_usd"] == 100000.0
+    assert state["realized_pnl_usd"] == 0.0
+    assert state["portfolio_value_usd"] == 100000.0
+    assert state["win_rate"] == 0.5 # 1 win (Trade 2), 1 loss (Trade 4)
+    assert state["total_trades"] == 4
+    assert len(state["positions"]) == 0
+

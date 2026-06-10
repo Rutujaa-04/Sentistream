@@ -50,3 +50,24 @@ This file documents the key design decisions, trade-offs, and rationale behind S
   - Initializing both models at worker startup avoids runtime "first-request" latency degradation for either version.
   - While it slightly increases the initial cold-start duration of the worker container, it guarantees stable, deterministic p99 latency benchmarks (< 50ms) for both user-facing endpoints immediately from the first live headline processed.
 
+---
+
+## 6. Support for Position Scaling (Adding to Existing Positions)
+- **Context**: In Long-Only and Long-Short strategy modes, a new buy/sell signal could arrive when the portfolio already holds a position in the target asset. We had to decide whether to restrict execution to only opening positions from a flat state or to allow adding to existing positions.
+- **Decision**: Keep the original Phase 2 design behavior, allowing the worker to add to existing positions on subsequent signals above threshold after the cooldown has elapsed, up to capital constraints.
+- **Rationale**: 
+  - Allows faster and more efficient capital deployment, preventing the system from staying idle with excess cash when subsequent strong positive/negative signals occur.
+  - Generates more realistic simulated trading curves and P&L history profiles that reflect consecutive momentum or sentiment-driven movements in individual assets.
+
+---
+
+## 7. Short-Covering Sizing and Liquidation Symmetry
+- **Context**: In Long-Short strategy mode, we need to handle opposing signals (e.g. a positive sentiment buy signal when we hold a negative short position). We must decide whether covering is done in incremental steps (e.g. 5% capital allocation slices) or if we fully cover (liquidate) the short position on a single buy signal.
+- **Decision**: Cover the entire short position completely on any positive sentiment buy signal (and similarly, liquidate the entire long position on any negative sentiment sell signal).
+- **Rationale**:
+  - **Symmetry**: This matches the Long-Only and Long-Short behavior where an opposing signal liquidates the entire long position.
+  - **Risk Management**: Short positions carry unlimited theoretical risk. Fully covering on a reverse sentiment signal ensures that the portfolio immediately stops losing money if market sentiment shifts against the short position.
+  - **Sizing Simplicity**: Avoids hanging short position remnants or complex multi-step partial coverage that would complicate demo P&L tracking and lead to outsized realized P&L swings.
+
+
+

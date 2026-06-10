@@ -341,6 +341,22 @@ export default function App() {
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
+  const [strategyMode, setStrategyMode] = useState('long_only');
+  
+  const handleStrategyChange = async (newMode) => {
+    setStrategyMode(newMode);
+    try {
+      await fetch('http://localhost:8000/api/v1/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ strategy_mode: newMode })
+      });
+    } catch (e) {
+      console.error("Failed to update strategy settings", e);
+    }
+  };
   
   // Real-time trading states
   const [showTradeGlow, setShowTradeGlow] = useState(false);
@@ -422,6 +438,13 @@ export default function App() {
       if (historyRes.ok) {
         const historyData = await historyRes.json();
         setPortfolioHistory(historyData.data || []);
+      }
+
+      // Strategy settings
+      const settingsRes = await fetch('http://localhost:8000/api/v1/settings');
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        setStrategyMode(settingsData.strategy_mode);
       }
     } catch (e) {
       console.error("Rest queries failed", e);
@@ -601,6 +624,28 @@ export default function App() {
               {ticker}
             </button>
           ))}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderLeft: '1px solid var(--border-light)', paddingLeft: '16px', marginLeft: '4px' }}>
+          <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', fontWeight: '600', color: 'var(--text-secondary)' }}>STRATEGY:</span>
+          <select
+            value={strategyMode}
+            onChange={(e) => handleStrategyChange(e.target.value)}
+            style={{
+              background: 'rgba(17, 24, 39, 0.8)',
+              color: '#FFF',
+              border: '1px solid var(--border-light)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '12px',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              outline: 'none'
+            }}
+          >
+            <option value="long_only">LONG-ONLY</option>
+            <option value="long_short">LONG-SHORT</option>
+          </select>
         </div>
 
         <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
@@ -796,7 +841,9 @@ export default function App() {
                     portfolio.positions.map((pos, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid var(--border-light)' }}>
                         <td style={{ padding: '10px 12px', fontWeight: 'bold', color: '#FFF' }}>{pos.ticker}</td>
-                        <td style={{ padding: '10px 12px', color: 'var(--color-bullish)' }}>{pos.shares} SHARES</td>
+                        <td style={{ padding: '10px 12px', color: pos.shares < 0 ? 'var(--color-drift)' : 'var(--color-bullish)', fontWeight: 'bold' }}>
+                          {pos.shares < 0 ? `${Math.abs(pos.shares)} SHORT` : `${pos.shares} SHARES`}
+                        </td>
                         <td style={{ padding: '10px 12px' }}>${pos.avg_price.toFixed(2)}</td>
                         <td style={{ padding: '10px 12px' }}>${pos.current_price.toFixed(2)}</td>
                         <td style={{ padding: '10px 12px' }}>${pos.market_value.toFixed(2)}</td>

@@ -43,43 +43,75 @@ class PortfolioService:
             price = float(trade["price"])
 
             if action == "buy":
-                cost = quantity * price
-                cash -= cost
-                if ticker not in positions:
-                    positions[ticker] = {"shares": 0, "total_cost": 0.0}
-                positions[ticker]["shares"] += quantity
-                positions[ticker]["total_cost"] += cost
-            elif action == "sell":
-                # For long-only strategy liquidation, sell closes existing shares
-                if ticker in positions and positions[ticker]["shares"] > 0:
-                    held_shares = positions[ticker]["shares"]
-                    avg_cost_per_share = positions[ticker]["total_cost"] / held_shares
+                # If short, cover the short first. Any residual quantity opens a long position.
+                if ticker in positions and positions[ticker]["shares"] < 0:
+                    held_shares = abs(positions[ticker]["shares"])
+                    avg_short_cost = positions[ticker]["total_cost"] / held_shares
                     
-                    # Liquidate either the specified quantity or all held shares (fully close position)
-                    sell_qty = min(quantity, held_shares)
-                    proceeds = sell_qty * price
-                    cash += proceeds
+                    cover_qty = min(quantity, held_shares)
+                    cover_cost = cover_qty * price
+                    cash -= cover_cost
                     
-                    # Calculate realized P&L based on cost basis
-                    trade_cost_basis = sell_qty * avg_cost_per_share
-                    trade_realized_pnl = proceeds - trade_cost_basis
+                    trade_realized_pnl = cover_qty * (avg_short_cost - price)
                     realized_pnl += trade_realized_pnl
-                    
                     if trade_realized_pnl > 0.0:
                         closed_wins += 1
                     elif trade_realized_pnl < 0.0:
                         closed_losses += 1
-
-                    # Update position shares
-                    positions[ticker]["shares"] -= sell_qty
-                    positions[ticker]["total_cost"] -= trade_cost_basis
+                        
+                    positions[ticker]["shares"] += cover_qty
+                    positions[ticker]["total_cost"] = abs(positions[ticker]["shares"]) * avg_short_cost
                     
-                    # Clean up empty position
-                    if positions[ticker]["shares"] <= 0:
+                    if positions[ticker]["shares"] == 0:
                         positions.pop(ticker)
+                        
+                    residual_qty = quantity - cover_qty
+                    if residual_qty > 0:
+                        cost = residual_qty * price
+                        cash -= cost
+                        positions[ticker] = {"shares": residual_qty, "total_cost": cost}
                 else:
-                    # Flat position, ignores sell or logs warning
-                    logger.warning("Sell trade encountered on flat position", ticker=ticker, quantity=quantity, price=price)
+                    cost = quantity * price
+                    cash -= cost
+                    if ticker not in positions:
+                        positions[ticker] = {"shares": 0, "total_cost": 0.0}
+                    positions[ticker]["shares"] += quantity
+                    positions[ticker]["total_cost"] += cost
+            elif action == "sell":
+                # If long, close the long first. Any residual quantity opens a short position.
+                if ticker in positions and positions[ticker]["shares"] > 0:
+                    held_shares = positions[ticker]["shares"]
+                    avg_long_cost = positions[ticker]["total_cost"] / held_shares
+                    
+                    close_qty = min(quantity, held_shares)
+                    proceeds = close_qty * price
+                    cash += proceeds
+                    
+                    trade_realized_pnl = proceeds - (close_qty * avg_long_cost)
+                    realized_pnl += trade_realized_pnl
+                    if trade_realized_pnl > 0.0:
+                        closed_wins += 1
+                    elif trade_realized_pnl < 0.0:
+                        closed_losses += 1
+                        
+                    positions[ticker]["shares"] -= close_qty
+                    positions[ticker]["total_cost"] = positions[ticker]["shares"] * avg_long_cost
+                    
+                    if positions[ticker]["shares"] == 0:
+                        positions.pop(ticker)
+                        
+                    residual_qty = quantity - close_qty
+                    if residual_qty > 0:
+                        proceeds = residual_qty * price
+                        cash += proceeds
+                        positions[ticker] = {"shares": -residual_qty, "total_cost": proceeds}
+                else:
+                    proceeds = quantity * price
+                    cash += proceeds
+                    if ticker not in positions:
+                        positions[ticker] = {"shares": 0, "total_cost": 0.0}
+                    positions[ticker]["shares"] -= quantity
+                    positions[ticker]["total_cost"] += proceeds
 
         # 3. Enrich active positions with current market prices
         enriched_positions = []
@@ -89,12 +121,16 @@ class PortfolioService:
         for ticker, pos_data in positions.items():
             shares = pos_data["shares"]
             total_cost = pos_data["total_cost"]
-            avg_price = total_cost / shares if shares > 0 else 0.0
-            
-            # Fetch current quote (hits cache/API)
-            current_price = await self.price_feed.get_price(ticker)
-            market_value = shares * current_price
-            unrealized_pnl = market_value - total_cost
+            if shares > 0:
+                avg_price = total_cost / shares
+                current_price = await self.price_feed.get_price(ticker)
+                market_value = shares * current_price
+                unrealized_pnl = market_value - total_cost
+            else:
+                avg_price = total_cost / abs(shares) if shares < 0 else 0.0
+                current_price = await self.price_feed.get_price(ticker)
+                market_value = shares * current_price
+                unrealized_pnl = total_cost + market_value
             
             total_market_value += market_value
             total_unrealized_pnl += unrealized_pnl
@@ -167,39 +203,83 @@ class PortfolioService:
             executed_at = trade["executed_at"]
             
             if action == "buy":
-                cost = quantity * price
-                cash -= cost
-                if ticker not in positions:
-                    positions[ticker] = {"shares": 0, "total_cost": 0.0, "last_price": 0.0}
-                positions[ticker]["shares"] += quantity
-                positions[ticker]["total_cost"] += cost
-                positions[ticker]["last_price"] = price
-            elif action == "sell":
-                if ticker in positions and positions[ticker]["shares"] > 0:
-                    held = positions[ticker]["shares"]
-                    avg_cost = positions[ticker]["total_cost"] / held
-                    sell_qty = min(quantity, held)
-                    proceeds = sell_qty * price
-                    cash += proceeds
+                # If short, cover the short first. Any residual quantity opens a long position.
+                if ticker in positions and positions[ticker]["shares"] < 0:
+                    held_shares = abs(positions[ticker]["shares"])
+                    avg_short_cost = positions[ticker]["total_cost"] / held_shares
                     
-                    trade_cost_basis = sell_qty * avg_cost
-                    trade_realized_pnl = proceeds - trade_cost_basis
+                    cover_qty = min(quantity, held_shares)
+                    cover_cost = cover_qty * price
+                    cash -= cover_cost
+                    
+                    trade_realized_pnl = cover_qty * (avg_short_cost - price)
                     realized_pnl += trade_realized_pnl
                     
-                    positions[ticker]["shares"] -= sell_qty
-                    positions[ticker]["total_cost"] -= trade_cost_basis
+                    positions[ticker]["shares"] += cover_qty
+                    positions[ticker]["total_cost"] = abs(positions[ticker]["shares"]) * avg_short_cost
                     positions[ticker]["last_price"] = price
                     
-                    if positions[ticker]["shares"] <= 0:
+                    if positions[ticker]["shares"] == 0:
                         positions.pop(ticker)
+                        
+                    residual_qty = quantity - cover_qty
+                    if residual_qty > 0:
+                        cost = residual_qty * price
+                        cash -= cost
+                        positions[ticker] = {"shares": residual_qty, "total_cost": cost, "last_price": price}
+                else:
+                    cost = quantity * price
+                    cash -= cost
+                    if ticker not in positions:
+                        positions[ticker] = {"shares": 0, "total_cost": 0.0, "last_price": price}
+                    positions[ticker]["shares"] += quantity
+                    positions[ticker]["total_cost"] += cost
+                    positions[ticker]["last_price"] = price
+            elif action == "sell":
+                # If long, close the long first. Any residual quantity opens a short position.
+                if ticker in positions and positions[ticker]["shares"] > 0:
+                    held_shares = positions[ticker]["shares"]
+                    avg_long_cost = positions[ticker]["total_cost"] / held_shares
+                    
+                    close_qty = min(quantity, held_shares)
+                    proceeds = close_qty * price
+                    cash += proceeds
+                    
+                    trade_realized_pnl = proceeds - (close_qty * avg_long_cost)
+                    realized_pnl += trade_realized_pnl
+                    
+                    positions[ticker]["shares"] -= close_qty
+                    positions[ticker]["total_cost"] = positions[ticker]["shares"] * avg_long_cost
+                    positions[ticker]["last_price"] = price
+                    
+                    if positions[ticker]["shares"] == 0:
+                        positions.pop(ticker)
+                        
+                    residual_qty = quantity - close_qty
+                    if residual_qty > 0:
+                        proceeds = residual_qty * price
+                        cash += proceeds
+                        positions[ticker] = {"shares": -residual_qty, "total_cost": proceeds, "last_price": price}
+                else:
+                    proceeds = quantity * price
+                    cash += proceeds
+                    if ticker not in positions:
+                        positions[ticker] = {"shares": 0, "total_cost": 0.0, "last_price": price}
+                    positions[ticker]["shares"] -= quantity
+                    positions[ticker]["total_cost"] += proceeds
+                    positions[ticker]["last_price"] = price
             
             # Recompute total position value and unrealized pnl
             positions_value = 0.0
-            unrealized_pnl = 0.0
+            unrealized_pnl_val = 0.0
             for tk, pos in positions.items():
-                mv = pos["shares"] * pos["last_price"]
+                sh = pos["shares"]
+                mv = sh * pos["last_price"]
                 positions_value += mv
-                unrealized_pnl += (mv - pos["total_cost"])
+                if sh >= 0:
+                    unrealized_pnl_val += (mv - pos["total_cost"])
+                else:
+                    unrealized_pnl_val += (pos["total_cost"] + mv)
                 
             step_val = cash + positions_value
             history.append({
@@ -207,7 +287,7 @@ class PortfolioService:
                 "portfolio_value": round(step_val, 2),
                 "cash": round(cash, 2),
                 "realized_pnl": round(realized_pnl, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl_val, 2),
                 "total_pnl": round(step_val - float(settings.INITIAL_PORTFOLIO_CAPITAL), 2)
             })
             

@@ -4,6 +4,8 @@ import os
 import sys
 import time
 from typing import Dict, List, Optional, Set
+from pydantic import BaseModel
+
 
 import redis.asyncio as aioredis
 import structlog
@@ -428,6 +430,39 @@ async def get_portfolio_history():
     except Exception as e:
         logger.error("Failed to retrieve portfolio history", error=str(e))
         raise HTTPException(status_code=500, detail="Portfolio history retrieval failed.")
+
+class SettingsPayload(BaseModel):
+    strategy_mode: str
+
+@app.get("/api/v1/settings")
+async def get_settings():
+    """Retrieves the active trading strategy settings from Redis."""
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis client not initialized")
+    try:
+        mode = await redis_client.get("sentistream:settings:strategy_mode")
+        if not mode:
+            mode = "long_only"
+        return {"strategy_mode": mode}
+    except Exception as e:
+        logger.error("Failed to read settings from Redis", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to read strategy settings")
+
+@app.post("/api/v1/settings")
+async def update_settings(payload: SettingsPayload):
+    """Updates the active trading strategy settings in Redis."""
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis client not initialized")
+    if payload.strategy_mode not in ("long_only", "long_short"):
+        raise HTTPException(status_code=400, detail="Invalid strategy_mode. Must be 'long_only' or 'long_short'")
+    try:
+        await redis_client.set("sentistream:settings:strategy_mode", payload.strategy_mode)
+        await redis_client.publish("sentistream:settings:updates", json.dumps({"strategy_mode": payload.strategy_mode}))
+        return {"status": "success", "strategy_mode": payload.strategy_mode}
+    except Exception as e:
+        logger.error("Failed to write settings to Redis", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update strategy settings")
+
 
 # ==========================================
 # WEBSOCKET STREAMING GATEWAY
