@@ -4,8 +4,6 @@ import os
 import sys
 import time
 from typing import Dict, List, Optional, Set
-from pydantic import BaseModel
-
 
 import redis.asyncio as aioredis
 import structlog
@@ -20,6 +18,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from pydantic import BaseModel
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
