@@ -66,6 +66,7 @@ class ConsumerWorker:
         # Tracks the last time a headline was processed for a ticker to detect quiet tickers
         self.last_headline_time: Dict[str, float] = {}
         self.backlog_task: Optional[asyncio.Task] = None
+        self.settings_listener_task: Optional[asyncio.Task] = None
         self.is_running = True
 
     async def initialize(self):
@@ -151,6 +152,60 @@ class ConsumerWorker:
             except Exception as e:
                 logger.error("Failed to refresh strategy settings, using cached value", strategy_mode=self.strategy_mode, error=str(e))
         return self.strategy_mode
+
+    async def listen_settings_updates(self):
+        """Listens to settings updates published via Redis Pub/Sub for instant cache invalidation or portfolio resets."""
+        pubsub = self.redis_client.pubsub()
+        await pubsub.subscribe("sentistream:settings:updates")
+        try:
+            while self.is_running:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message and message.get("type") == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        # Handle strategy mode updates
+                        new_mode = data.get("strategy_mode")
+                        if new_mode in ("long_only", "long_short"):
+                            self.strategy_mode = new_mode
+                            self.last_settings_read_time = time.time()
+                            logger.info("Instantly updated strategy mode via Pub/Sub", strategy_mode=self.strategy_mode)
+                        
+                        # Handle portfolio reset event
+                        action = data.get("action")
+                        if action == "reset_portfolio":
+                            initial_capital = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+                            self.portfolio_cash = initial_capital
+                            self.portfolio_positions = {}
+                            self.total_portfolio_value = initial_capital
+                            
+                            # Reset Prometheus gauges
+                            PORTFOLIO_CASH.set(self.portfolio_cash)
+                            PORTFOLIO_TOTAL_VALUE.set(self.total_portfolio_value)
+                            POSITION_SHARES.clear()
+                            
+                            logger.info("Portfolio state reset completed in worker")
+                            
+                            # Broadcast a reset signal to frontend so the UI updates instantly
+                            reset_payload = {
+                                "type": "portfolio_reset",
+                                "data": {
+                                    "cash_usd": self.portfolio_cash,
+                                    "portfolio_value_usd": self.total_portfolio_value,
+                                    "positions": []
+                                }
+                            }
+                            await self.redis_client.publish("sentistream:sentiment_events", json.dumps(reset_payload))
+                            
+                    except Exception as parse_err:
+                        logger.error("Failed to parse settings update message", error=str(parse_err))
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Error in settings update Pub/Sub listener", error=str(e))
+        finally:
+            await pubsub.unsubscribe("sentistream:settings:updates")
+
 
     async def setup_consumer_group(self):
         """Idempotently creates the Redis Stream consumer group."""
@@ -611,6 +666,8 @@ class ConsumerWorker:
         
         # Start background queue backlog logging task
         self.backlog_task = asyncio.create_task(self.record_queue_backlogs())
+        # Start background settings updates listener task
+        self.settings_listener_task = asyncio.create_task(self.listen_settings_updates())
         
         while self.is_running:
             try:
@@ -649,6 +706,12 @@ class ConsumerWorker:
             self.backlog_task.cancel()
             try:
                 await self.backlog_task
+            except asyncio.CancelledError:
+                pass
+        if self.settings_listener_task:
+            self.settings_listener_task.cancel()
+            try:
+                await self.settings_listener_task
             except asyncio.CancelledError:
                 pass
         if self.trading_engine and hasattr(self.trading_engine, "close"):

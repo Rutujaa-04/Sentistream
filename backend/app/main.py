@@ -430,6 +430,18 @@ async def get_portfolio_history():
         logger.error("Failed to retrieve portfolio history", error=str(e))
         raise HTTPException(status_code=500, detail="Portfolio history retrieval failed.")
 
+@app.post("/api/v1/portfolio/reset")
+async def reset_portfolio():
+    """Resets the paper trading portfolio by clearing trade history and broadcasting reset."""
+    try:
+        await db.clear_paper_trades()
+        if redis_client:
+            await redis_client.publish("sentistream:settings:updates", json.dumps({"action": "reset_portfolio"}))
+        return {"status": "success", "message": "Portfolio cleared successfully"}
+    except Exception as e:
+        logger.error("Failed to reset portfolio", error=str(e))
+        raise HTTPException(status_code=500, detail="Portfolio reset failed")
+
 class SettingsPayload(BaseModel):
     strategy_mode: str
 

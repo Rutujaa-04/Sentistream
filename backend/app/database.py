@@ -368,6 +368,12 @@ class ClickHouseDatabase:
             })
         return results
 
+    async def clear_paper_trades(self):
+        """Truncates the paper_trades table in ClickHouse."""
+        query = "TRUNCATE TABLE paper_trades"
+        await self.execute(query)
+
+
     async def query_ab_stats(self) -> List[Dict[str, Any]]:
         """Queries ClickHouse for aggregate latency and counts grouped by model version."""
         query = """

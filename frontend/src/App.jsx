@@ -357,6 +357,19 @@ export default function App() {
       console.error("Failed to update strategy settings", e);
     }
   };
+
+  const handleResetPortfolio = async () => {
+    if (window.confirm("Are you sure you want to clear all trade history and reset the portfolio to $100,000.00?")) {
+      try {
+        await fetch('http://localhost:8000/api/v1/portfolio/reset', {
+          method: 'POST'
+        });
+        fetchTelemetryData();
+      } catch (e) {
+        console.error("Failed to reset portfolio", e);
+      }
+    }
+  };
   
   // Real-time trading states
   const [showTradeGlow, setShowTradeGlow] = useState(false);
@@ -507,6 +520,9 @@ export default function App() {
         setTimeout(() => {
           setInsufficientCapitalAlert(null);
         }, 5000);
+      } else if (eventType === "portfolio_reset") {
+        logger_log("Portfolio reset! Refreshing telemetry data.");
+        fetchTelemetryData();
       }
     };
 
@@ -646,6 +662,27 @@ export default function App() {
             <option value="long_only">LONG-ONLY</option>
             <option value="long_short">LONG-SHORT</option>
           </select>
+          <button
+            onClick={handleResetPortfolio}
+            style={{
+              background: 'rgba(239, 68, 68, 0.2)',
+              color: 'var(--color-bearish)',
+              border: '1px solid rgba(239, 68, 68, 0.5)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '11px',
+              fontWeight: '600',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              outline: 'none',
+              marginLeft: '4px',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.background = 'rgba(239, 68, 68, 0.4)'}
+            onMouseLeave={(e) => e.target.style.background = 'rgba(239, 68, 68, 0.2)'}
+          >
+            RESET
+          </button>
         </div>
 
         <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
