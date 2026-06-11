@@ -153,7 +153,8 @@ jobs:
           pip install pip-audit
           # Ignore safety audits on non-critical local dev packages if necessary, otherwise scan requirements
           # We ignore PYSEC-2025-217 and CVE-2026-1839 because they are in transformers v4, which is strictly required by optimum-onnx
-          pip-audit --ignore-vuln PYSEC-2025-217 --ignore-vuln CVE-2026-1839 -r backend/requirements.txt
+          # We ignore CVE-2025-3000 in torch because upgrading torch version breaks ONNX export compatibility
+          pip-audit --ignore-vuln PYSEC-2025-217 --ignore-vuln CVE-2026-1839 --ignore-vuln CVE-2025-3000 -r backend/requirements.txt
           
       - name: Run npm audit
         run: |
