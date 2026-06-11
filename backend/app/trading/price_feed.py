@@ -30,7 +30,7 @@ class PriceFeed:
                 "SPY": 530.0,
                 "AAPL": 210.0,
                 "TSLA": 250.0,
-                "NVDA": 950.0
+                "NVDA": 130.0
             }
             self.initialized = True
 
