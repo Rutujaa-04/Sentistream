@@ -270,31 +270,6 @@ class ConsumerWorker:
             )
         return self.drift_detectors[ticker]
 
-    async def send_slack_alert(self, ticker: str, direction: str, z_score: float, threshold: float):
-        """Sends a notification to a Slack webhook when statistical sentiment drift is detected."""
-        webhook_url = settings.SLACK_WEBHOOK_URL
-        if not webhook_url or not webhook_url.startswith("http"):
-            logger.info("Slack webhook URL not configured or invalid, skipping Slack alert", ticker=ticker)
-            return
-
-        payload = {
-            "text": f"🚨 *SentiStream Statistical Sentiment Drift Alert* 🚨\n"
-                    f"*Ticker*: `{ticker}`\n"
-                    f"*Direction*: `{direction.replace('_', ' ').upper()}`\n"
-                    f"*Rolling Z-Score*: `{z_score:+.2f}` (Threshold: `{threshold:+.1f}`)\n"
-                    f"*System Action*: Logged to ClickHouse & Metrics updated."
-        }
-        try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.post(webhook_url, json=payload, timeout=5) as resp:
-                    if resp.status in (200, 201):
-                        logger.info("Successfully dispatched drift alert to Slack webhook", ticker=ticker)
-                    else:
-                        logger.warning("Slack webhook returned non-success status", status=resp.status, ticker=ticker)
-        except Exception as e:
-            logger.error("Failed to send Slack webhook alert", error=str(e), ticker=ticker)
-
     async def process_message(self, message_id: str, fields: dict):
         """Orchestrates the lifecycle of a single financial news headline message."""
         t_total_start = time.perf_counter()
@@ -394,13 +369,6 @@ class ConsumerWorker:
                     z_score=drift_signal.z_score, 
                     direction=drift_signal.direction
                 )
-                # Dispatch alert to Slack webhook asynchronously
-                asyncio.create_task(self.send_slack_alert(
-                    ticker=ticker,
-                    direction=drift_signal.direction,
-                    z_score=drift_signal.z_score,
-                    threshold=drift_signal.triggered_threshold
-                ))
 
             # D. Execute Paper Trade Order if strategy triggers a signal
             bypass_cooldown = source in ("trades_seeder", "playwright_e2e_test", "trades_generator")

@@ -34,7 +34,6 @@ class Settings(BaseModel):
     TRADING_ENGINE: str = Field(default="simulated")
     INITIAL_PORTFOLIO_CAPITAL: float = Field(default=100000.0)
     FORCE_TRADE_COST_USD: float = Field(default=0.0)
-    SLACK_WEBHOOK_URL: str = Field(default="")
 
     @classmethod
     def load(cls):
