@@ -45,7 +45,7 @@ class PriceFeed:
             await self.session.close()
             self.session = None
 
-    async def get_price(self, ticker: str) -> float:
+    async def get_price(self, ticker: str, bypass_cache: bool = False) -> float:
         """
         Retrieves the price for a stock ticker, using an in-memory 30-second cache,
         polling Finnhub quote API as primary and falling back to mock prices on error.
@@ -54,7 +54,7 @@ class PriceFeed:
         now = time.time()
 
         # 1. Check cache first
-        if ticker in self.cache:
+        if not bypass_cache and ticker in self.cache:
             cached_price, cached_time = self.cache[ticker]
             if now - cached_time < 30.0:
                 logger.info("Serving price from cache", ticker=ticker, price=cached_price)
@@ -72,9 +72,13 @@ class PriceFeed:
                         current_price = data.get("c")
                         # Validate response has a positive current price
                         if current_price is not None and isinstance(current_price, (int, float)) and current_price > 0.0:
-                            self.cache[ticker] = (float(current_price), now)
-                            logger.info("Fetched live quote from Finnhub API", ticker=ticker, price=current_price)
-                            return float(current_price)
+                            price_val = float(current_price)
+                            if bypass_cache:
+                                # Add +/- 1% fluctuation to simulate market movement for demo runs
+                                price_val = round(price_val * (1.0 + random.uniform(-0.01, 0.01)), 2)
+                            self.cache[ticker] = (price_val, now)
+                            logger.info("Fetched live quote from Finnhub API", ticker=ticker, price=price_val)
+                            return price_val
                         else:
                             logger.warning("Finnhub quote API returned invalid price structure", ticker=ticker, data=data)
                     elif response.status == 429:

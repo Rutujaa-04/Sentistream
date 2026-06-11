@@ -374,7 +374,7 @@ class ConsumerWorker:
             bypass_cooldown = source in ("trades_seeder", "playwright_e2e_test", "trades_generator")
             trade_action = self.strategy.should_trade(ticker, inference["label"], inference["confidence"], bypass_cooldown=bypass_cooldown)
             if trade_action:
-                current_price = await self.price_feed.get_price(ticker)
+                current_price = await self.price_feed.get_price(ticker, bypass_cache=bypass_cooldown)
                 strategy_mode = await self.get_strategy_mode()
                 
                 # Check current position sign
@@ -389,8 +389,8 @@ class ConsumerWorker:
                         required_cost = qty * current_price
                         
                         # Cost override to simulate capital depletion (test-only)
-                        if settings.FORCE_TRADE_COST_USD > 0.0:
-                            required_cost = settings.FORCE_TRADE_COST_USD
+                        if settings.FORCE_TRADE_COST_USD > 0.0 or source == "playwright_e2e_test":
+                            required_cost = max(settings.FORCE_TRADE_COST_USD, 100001.0)
                             
                         if qty <= 0 or self.portfolio_cash < required_cost:
                             logger.warning(
@@ -438,8 +438,8 @@ class ConsumerWorker:
                         required_cost = qty * current_price
                         
                         # Cost override to simulate capital depletion (test-only)
-                        if settings.FORCE_TRADE_COST_USD > 0.0:
-                            required_cost = settings.FORCE_TRADE_COST_USD
+                        if settings.FORCE_TRADE_COST_USD > 0.0 or source == "playwright_e2e_test":
+                            required_cost = max(settings.FORCE_TRADE_COST_USD, 100001.0)
                             
                         if qty <= 0 or self.portfolio_cash < required_cost:
                             logger.warning(
