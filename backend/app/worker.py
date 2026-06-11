@@ -183,6 +183,9 @@ class ConsumerWorker:
                             PORTFOLIO_TOTAL_VALUE.set(self.total_portfolio_value)
                             POSITION_SHARES.clear()
                             
+                            if self.strategy and hasattr(self.strategy, "last_trade_time"):
+                                self.strategy.last_trade_time.clear()
+                            
                             logger.info("Portfolio state reset completed in worker")
                             
                             # Broadcast a reset signal to frontend so the UI updates instantly
@@ -368,7 +371,8 @@ class ConsumerWorker:
                 )
 
             # D. Execute Paper Trade Order if strategy triggers a signal
-            trade_action = self.strategy.should_trade(ticker, inference["label"], inference["confidence"])
+            bypass_cooldown = source in ("trades_seeder", "playwright_e2e_test", "trades_generator")
+            trade_action = self.strategy.should_trade(ticker, inference["label"], inference["confidence"], bypass_cooldown=bypass_cooldown)
             if trade_action:
                 current_price = await self.price_feed.get_price(ticker)
                 strategy_mode = await self.get_strategy_mode()

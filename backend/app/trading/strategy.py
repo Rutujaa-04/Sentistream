@@ -8,7 +8,7 @@ logger = structlog.get_logger()
 
 class BaseStrategy(ABC):
     @abstractmethod
-    def should_trade(self, ticker: str, sentiment: str, confidence: float) -> Optional[str]:
+    def should_trade(self, ticker: str, sentiment: str, confidence: float, bypass_cooldown: bool = False) -> Optional[str]:
         """
         Evaluates whether a trade should be executed.
         Returns:
@@ -24,7 +24,7 @@ class ThresholdStrategy(BaseStrategy):
         # In-memory cooldown tracking per ticker
         self.last_trade_time: Dict[str, float] = {}
 
-    def should_trade(self, ticker: str, sentiment: str, confidence: float) -> Optional[str]:
+    def should_trade(self, ticker: str, sentiment: str, confidence: float, bypass_cooldown: bool = False) -> Optional[str]:
         """
         Applies a threshold and a time-based cooldown to decide trade signals.
         """
@@ -43,7 +43,7 @@ class ThresholdStrategy(BaseStrategy):
         last_time = self.last_trade_time.get(ticker, 0.0)
         elapsed = current_time - last_time
         
-        if elapsed < self.cooldown_seconds:
+        if not bypass_cooldown and elapsed < self.cooldown_seconds:
             logger.info(
                 "Trade signal suppressed by cooldown",
                 ticker=ticker,
