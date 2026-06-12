@@ -583,33 +583,112 @@ export default function App() {
       {/* ==========================================
           HEADER SYSTEM PANEL
           ========================================== */}
-      <header className="card" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', borderBottom: '1px solid var(--border-glow)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <h1 style={{ fontSize: '20px', letterSpacing: '0.05em', color: '#FFF', fontFamily: 'var(--font-sans)' }}>
-            SENTISTREAM // <span style={{ color: 'var(--color-neutral)' }}>REAL-TIME MLOPS OBSERVABILITY</span>
-          </h1>
-          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-            FINBERT SENTIMENT PIPELINE & QUANTITATIVE PAPER TRADING GATEWAY
-          </p>
+      <header className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', overflow: 'hidden' }}>
+        {/* Background Waves */}
+        <svg width="250" height="150" viewBox="0 0 250 150" fill="none" style={{ position: 'absolute', right: 0, top: 0, height: '100%', opacity: 0.08, pointerEvents: 'none', zIndex: 1 }} xmlns="http://www.w3.org/2000/svg">
+          <path d="M180,-20 C200,30 220,70 250,100 M190,-20 C210,30 230,70 260,100 M200,-20 C220,30 240,70 270,100" stroke="var(--color-neutral)" strokeWidth="1.5" />
+          <path d="M140,-20 C170,40 190,90 230,120 M150,-20 C180,40 200,90 240,120" stroke="var(--color-neutral)" strokeWidth="1" strokeDasharray="2 4" />
+        </svg>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', zIndex: 2, width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* Circle Graph Logo */}
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+              <circle cx="24" cy="24" r="22" stroke="var(--color-neutral)" strokeWidth="2.5" fill="rgba(59, 130, 246, 0.08)" style={{ filter: 'drop-shadow(0 0 4px rgba(59, 130, 246, 0.3))' }} />
+              <path d="M14 32 L20 26 L26 28 L34 16" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M28 16 H34 V22" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <h1 style={{ fontSize: '32px', fontWeight: '800', fontFamily: 'var(--font-sans)', letterSpacing: '-0.02em', margin: 0, display: 'flex', alignItems: 'center' }}>
+                <span style={{ color: '#ffffff' }}>Senti</span>
+                <span style={{ color: 'var(--color-neutral)' }}>Stream</span>
+                <span style={{ display: 'none' }}>SENTISTREAM</span>
+              </h1>
+              <div style={{ width: '48px', height: '2px', background: 'linear-gradient(90deg, var(--color-neutral), transparent)', borderRadius: '1px' }} />
+              <div style={{ color: 'var(--color-neutral)', fontWeight: '600', fontSize: '11px', letterSpacing: '0.12em', textTransform: 'uppercase', fontFamily: 'var(--font-sans)', marginTop: '2px' }}>
+                Sentiment Driven Trading Intelligence
+              </div>
+            </div>
+          </div>
+
+          {/* Diagnostics Badges */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+            <div className="badge badge-neutral" style={{ padding: '4px 10px' }}>
+              <span className={`status-indicator ${connectionStatus === 'connected' ? 'online' : connectionStatus === 'connecting' ? 'warning' : 'offline'}`} />
+              WS STREAM: {connectionStatus.toUpperCase()}
+            </div>
+            
+            <div className={`badge ${backendPing?.clickhouse === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
+              CH STORAGE: {backendPing?.clickhouse === 'warm' ? 'WARM' : 'COLD'}
+            </div>
+
+            <div className={`badge ${backendPing?.redis === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
+              REDIS BROKER: {backendPing?.redis === 'warm' ? 'ACTIVE' : 'OFFLINE'}
+            </div>
+
+            <div className={`badge ${backendPing?.onnx_model === 'loaded' ? 'badge-bullish' : 'badge-bearish'}`}>
+              ONNX Serving: {backendPing?.onnx_model === 'loaded' ? 'INT8' : 'MISSING'}
+            </div>
+          </div>
         </div>
 
-        {/* Diagnostics Badges */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
-          <div className="badge badge-neutral" style={{ padding: '4px 10px' }}>
-            <span className={`status-indicator ${connectionStatus === 'connected' ? 'online' : connectionStatus === 'connecting' ? 'warning' : 'offline'}`} />
-            WS STREAM: {connectionStatus.toUpperCase()}
-          </div>
-          
-          <div className={`badge ${backendPing?.clickhouse === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
-            CH STORAGE: {backendPing?.clickhouse === 'warm' ? 'WARM' : 'COLD'}
+        {/* Telemetry Badge Grid */}
+        <div className="header-badge-grid" style={{ zIndex: 2 }}>
+          {/* Pill 1 */}
+          <div className="header-telemetry-card">
+            <div className="header-icon-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+            </div>
+            <div className="header-text-container">
+              <span className="header-text-label">Real-time</span>
+              <span className="header-text-value">Sentiment</span>
+            </div>
           </div>
 
-          <div className={`badge ${backendPing?.redis === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
-            REDIS BROKER: {backendPing?.redis === 'warm' ? 'ACTIVE' : 'OFFLINE'}
+          {/* Pill 2 */}
+          <div className="header-telemetry-card">
+            <div className="header-icon-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 20V10M12 20V4M6 20v-6" />
+              </svg>
+            </div>
+            <div className="header-text-container">
+              <span className="header-text-label">Observability</span>
+              <span className="header-text-value">Insights</span>
+            </div>
           </div>
 
-          <div className={`badge ${backendPing?.onnx_model === 'loaded' ? 'badge-bullish' : 'badge-bearish'}`}>
-            ONNX Serving: {backendPing?.onnx_model === 'loaded' ? 'INT8' : 'MISSING'}
+          {/* Pill 3 */}
+          <div className="header-telemetry-card">
+            <div className="header-icon-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="10" rx="2" />
+                <path d="M12 2v4M12 6H8m4 0h4M6 11V9a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+                <circle cx="9" cy="15" r="1" />
+                <circle cx="15" cy="15" r="1" />
+              </svg>
+            </div>
+            <div className="header-text-container">
+              <span className="header-text-label">FinBERT</span>
+              <span className="header-text-value">Powered</span>
+            </div>
+          </div>
+
+          {/* Pill 4 */}
+          <div className="header-telemetry-card">
+            <div className="header-icon-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+              </svg>
+            </div>
+            <div className="header-text-container">
+              <span className="header-text-label">Quantitative</span>
+              <span className="header-text-value">Paper Trading</span>
+            </div>
           </div>
         </div>
       </header>
