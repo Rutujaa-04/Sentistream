@@ -2,7 +2,7 @@
 
 **SentiStream** is a real-time, event-driven MLOps sentiment analytics and quantitative paper trading pipeline for financial headlines. It demonstrates high-performance data engineering, machine learning service deployment, and real-time observability.
 
-The system processes financial news feeds through an event queue, routes themDeterministically to dual ONNX FinBERT models, checks for statistical sentiment drift, and executes quantitative trading strategies (Long-Only or Long-Short/Short-Selling) on simulated or live Alpaca brokerage sandboxes.
+The system processes financial news feeds through an event queue, routes them deterministically to dual ONNX FinBERT models, checks for statistical sentiment drift, and executes quantitative trading strategies (Long-Only or Long-Short/Short-Selling) on simulated or live Alpaca brokerage sandboxes.
 
 ---
 
@@ -16,7 +16,7 @@ The system processes financial news feeds through an event queue, routes themDet
 ### 2. Dual ONNX Model Registry & A/B Testing
 * Concurrently runs **Champion (`v1`)** and **Challenger (`v2`)** INT8-quantized FinBERT models locally via CPU execution threads.
 * Implements a deterministic **80/20 A/B split** based on the headline UUID's hash modulo:
-  $$\text{Model Version} = \text{v1} \text{ if } \text{int(headline\_id[:8], 16) \% 10 < 8} \text{ else } \text{v2}$$
+  `Model Version = v1 if int(headline_id[:8], 16) % 10 < 8 else v2`
   This ensures stable model assignment across worker restarts and Dead Letter Queue (DLQ) replays.
 * Exposes detailed evaluation counts, average latencies, and p50, p95, and p99 percentile distributions grouped by model version.
 
@@ -56,7 +56,7 @@ graph TD
     Ingestor[Finnhub & RSS Ingestor] -->|JSON Payload| Redis[Redis Stream: raw_headlines]
     Redis -->|Group Consume| Worker[Consumer Worker]
     
-    subgraph Worker Process (Stream Processing)
+    subgraph "Worker Process (Stream Processing)"
         ModelRegistry[Model Registry: Champion v1 & Challenger v2]
         DriftDetector[Z-Score Drift Detector]
         Strategy[Threshold-Based Trading Strategy]
