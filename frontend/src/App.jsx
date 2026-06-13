@@ -583,6 +583,9 @@ export default function App() {
       {/* ==========================================
           HEADER SYSTEM PANEL
           ========================================== */}
+      {/* ==========================================
+          HEADER SYSTEM PANEL
+          ========================================== */}
       <header className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', overflow: 'hidden' }}>
         {/* Background Waves */}
         <svg width="250" height="150" viewBox="0 0 250 150" fill="none" style={{ position: 'absolute', right: 0, top: 0, height: '100%', opacity: 0.08, pointerEvents: 'none', zIndex: 1 }} xmlns="http://www.w3.org/2000/svg">
@@ -590,7 +593,7 @@ export default function App() {
           <path d="M140,-20 C170,40 190,90 230,120 M150,-20 C180,40 200,90 240,120" stroke="var(--color-neutral)" strokeWidth="1" strokeDasharray="2 4" />
         </svg>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', zIndex: 2, width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '20px', zIndex: 2, width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {/* Circle Graph Logo */}
             <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
@@ -612,83 +615,85 @@ export default function App() {
             </div>
           </div>
 
-          {/* Diagnostics Badges */}
+          {/* Telemetry Badge Cards (Subheading Boxes moved up) */}
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
-            <div className="badge badge-neutral" style={{ padding: '4px 10px' }}>
-              <span className={`status-indicator ${connectionStatus === 'connected' ? 'online' : connectionStatus === 'connecting' ? 'warning' : 'offline'}`} />
-              WS STREAM: {connectionStatus.toUpperCase()}
-            </div>
-            
-            <div className={`badge ${backendPing?.clickhouse === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
-              CH STORAGE: {backendPing?.clickhouse === 'warm' ? 'WARM' : 'COLD'}
+            {/* Pill 1 */}
+            <div className="header-telemetry-card" style={{ padding: '8px 12px' }}>
+              <div className="header-icon-box" style={{ width: '32px', height: '32px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+              </div>
+              <div className="header-text-container" style={{ gap: '0px' }}>
+                <span className="header-text-label" style={{ fontSize: '10px' }}>Real-time</span>
+                <span className="header-text-value" style={{ fontSize: '12px' }}>Sentiment</span>
+              </div>
             </div>
 
-            <div className={`badge ${backendPing?.redis === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
-              REDIS BROKER: {backendPing?.redis === 'warm' ? 'ACTIVE' : 'OFFLINE'}
+            {/* Pill 2 */}
+            <div className="header-telemetry-card" style={{ padding: '8px 12px' }}>
+              <div className="header-icon-box" style={{ width: '32px', height: '32px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 20V10M12 20V4M6 20v-6" />
+                </svg>
+              </div>
+              <div className="header-text-container" style={{ gap: '0px' }}>
+                <span className="header-text-label" style={{ fontSize: '10px' }}>Observability</span>
+                <span className="header-text-value" style={{ fontSize: '12px' }}>Insights</span>
+              </div>
             </div>
 
-            <div className={`badge ${backendPing?.onnx_model === 'loaded' ? 'badge-bullish' : 'badge-bearish'}`}>
-              ONNX Serving: {backendPing?.onnx_model === 'loaded' ? 'INT8' : 'MISSING'}
+            {/* Pill 3 */}
+            <div className="header-telemetry-card" style={{ padding: '8px 12px' }}>
+              <div className="header-icon-box" style={{ width: '32px', height: '32px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <path d="M12 2v4M12 6H8m4 0h4M6 11V9a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+                  <circle cx="9" cy="15" r="1" />
+                  <circle cx="15" cy="15" r="1" />
+                </svg>
+              </div>
+              <div className="header-text-container" style={{ gap: '0px' }}>
+                <span className="header-text-label" style={{ fontSize: '10px' }}>FinBERT</span>
+                <span className="header-text-value" style={{ fontSize: '12px' }}>Powered</span>
+              </div>
+            </div>
+
+            {/* Pill 4 */}
+            <div className="header-telemetry-card" style={{ padding: '8px 12px' }}>
+              <div className="header-icon-box" style={{ width: '32px', height: '32px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+                </svg>
+              </div>
+              <div className="header-text-container" style={{ gap: '0px' }}>
+                <span className="header-text-label" style={{ fontSize: '10px' }}>Quantitative</span>
+                <span className="header-text-value" style={{ fontSize: '12px' }}>Paper Trading</span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Telemetry Badge Grid */}
-        <div className="header-badge-grid" style={{ zIndex: 2 }}>
-          {/* Pill 1 */}
-          <div className="header-telemetry-card">
-            <div className="header-icon-box">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
-            </div>
-            <div className="header-text-container">
-              <span className="header-text-label">Real-time</span>
-              <span className="header-text-value">Sentiment</span>
-            </div>
+        {/* Diagnostics Badges (Connection Boxes moved down) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', zIndex: 2, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: '12px', width: '100%' }}>
+          <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', marginRight: '4px', fontWeight: '600', letterSpacing: '0.05em' }}>SYSTEM PORTS:</span>
+          
+          <div className="badge badge-neutral" style={{ padding: '4px 10px' }}>
+            <span className={`status-indicator ${connectionStatus === 'connected' ? 'online' : connectionStatus === 'connecting' ? 'warning' : 'offline'}`} />
+            WS STREAM: {connectionStatus.toUpperCase()}
+          </div>
+          
+          <div className={`badge ${backendPing?.clickhouse === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
+            CH STORAGE: {backendPing?.clickhouse === 'warm' ? 'WARM' : 'COLD'}
           </div>
 
-          {/* Pill 2 */}
-          <div className="header-telemetry-card">
-            <div className="header-icon-box">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 20V10M12 20V4M6 20v-6" />
-              </svg>
-            </div>
-            <div className="header-text-container">
-              <span className="header-text-label">Observability</span>
-              <span className="header-text-value">Insights</span>
-            </div>
+          <div className={`badge ${backendPing?.redis === 'warm' ? 'badge-bullish' : 'badge-bearish'}`}>
+            REDIS BROKER: {backendPing?.redis === 'warm' ? 'ACTIVE' : 'OFFLINE'}
           </div>
 
-          {/* Pill 3 */}
-          <div className="header-telemetry-card">
-            <div className="header-icon-box">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="10" rx="2" />
-                <path d="M12 2v4M12 6H8m4 0h4M6 11V9a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
-                <circle cx="9" cy="15" r="1" />
-                <circle cx="15" cy="15" r="1" />
-              </svg>
-            </div>
-            <div className="header-text-container">
-              <span className="header-text-label">FinBERT</span>
-              <span className="header-text-value">Powered</span>
-            </div>
-          </div>
-
-          {/* Pill 4 */}
-          <div className="header-telemetry-card">
-            <div className="header-icon-box">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
-              </svg>
-            </div>
-            <div className="header-text-container">
-              <span className="header-text-label">Quantitative</span>
-              <span className="header-text-value">Paper Trading</span>
-            </div>
+          <div className={`badge ${backendPing?.onnx_model === 'loaded' ? 'badge-bullish' : 'badge-bearish'}`}>
+            ONNX Serving: {backendPing?.onnx_model === 'loaded' ? 'INT8' : 'MISSING'}
           </div>
         </div>
       </header>
