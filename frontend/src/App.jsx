@@ -745,26 +745,81 @@ export default function App() {
             </p>
           </div>
 
-          {/* ECG Pulse Heartbeat Wave */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              <span>PIPELINE FREQUENCY HEARTBEAT</span>
-              <span>INFERENCE ACTIVE</span>
+          {/* Real-time Sentiment Distribution Ratio */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+              <span>PIPELINE SENTIMENT DISTRIBUTION</span>
+              <span>LIVE FEED RATIO</span>
             </div>
-            <div style={{ background: 'rgba(9, 13, 26, 0.5)', border: '1px solid rgba(59, 130, 246, 0.05)', borderRadius: '8px', padding: '10px', overflow: 'hidden', height: '90px', display: 'flex', alignItems: 'center' }}>
-              <svg width="100%" height="70" viewBox="0 0 400 100" style={{ pointerEvents: 'none' }}>
-                <path
-                  d="M 10 50 Q 30 50 50 50 L 70 50 L 80 40 L 85 65 L 95 10 L 105 85 L 115 50 L 125 55 L 130 50 Q 150 50 170 50 L 190 50 L 200 40 L 205 65 L 215 10 L 225 85 L 235 50 L 245 55 L 250 50 Q 270 50 290 50 L 310 50 L 320 40 L 325 65 L 335 10 L 345 85 L 355 50 L 365 55 L 370 50 L 400 50"
-                  fill="none"
-                  stroke={calculateConvictionScore().color}
-                  strokeWidth="2.5"
-                  className="ecg-line"
-                  style={{
-                    animation: `ecg-pulse ${calculateConvictionScore().speed} linear infinite`,
-                    filter: `drop-shadow(0 0 4px ${calculateConvictionScore().color})`
-                  }}
-                />
-              </svg>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px', background: 'rgba(9, 13, 26, 0.4)', border: '1px solid rgba(255, 255, 255, 0.03)', borderRadius: '12px' }}>
+              {/* Segmented bar */}
+              <div style={{ width: '100%', height: '14px', borderRadius: '7px', display: 'flex', overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                {(() => {
+                  const totalSentimentCount = bullishCount + bearishCount + neutralCount;
+                  const posPct = totalSentimentCount > 0 ? Math.round((bullishCount / totalSentimentCount) * 100) : 33;
+                  const neuPct = totalSentimentCount > 0 ? Math.round((neutralCount / totalSentimentCount) * 100) : 34;
+                  const negPct = totalSentimentCount > 0 ? Math.round((bearishCount / totalSentimentCount) * 100) : 33;
+                  return (
+                    <>
+                      {posPct > 0 && (
+                        <div style={{
+                          width: `${posPct}%`,
+                          height: '100%',
+                          background: 'var(--color-bullish)',
+                          boxShadow: '0 0 10px rgba(16, 185, 129, 0.4)',
+                          transition: 'width 0.5s ease'
+                        }} />
+                      )}
+                      {neuPct > 0 && (
+                        <div style={{
+                          width: `${neuPct}%`,
+                          height: '100%',
+                          background: 'var(--color-neutral)',
+                          boxShadow: '0 0 10px rgba(59, 130, 246, 0.3)',
+                          transition: 'width 0.5s ease'
+                        }} />
+                      )}
+                      {negPct > 0 && (
+                        <div style={{
+                          width: `${negPct}%`,
+                          height: '100%',
+                          background: 'var(--color-bearish)',
+                          boxShadow: '0 0 10px rgba(239, 68, 68, 0.4)',
+                          transition: 'width 0.5s ease'
+                        }} />
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Legends with counts and percentages */}
+              {(() => {
+                const totalSentimentCount = bullishCount + bearishCount + neutralCount;
+                const posPct = totalSentimentCount > 0 ? Math.round((bullishCount / totalSentimentCount) * 100) : 33;
+                const neuPct = totalSentimentCount > 0 ? Math.round((neutralCount / totalSentimentCount) * 100) : 34;
+                const negPct = totalSentimentCount > 0 ? Math.round((bearishCount / totalSentimentCount) * 100) : 33;
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-bullish)' }} />
+                      <span style={{ color: '#FFF', fontWeight: 'bold' }}>BULLISH:</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{bullishCount} ({posPct}%)</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-neutral)' }} />
+                      <span style={{ color: '#FFF', fontWeight: 'bold' }}>NEUTRAL:</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{neutralCount} ({neuPct}%)</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-bearish)' }} />
+                      <span style={{ color: '#FFF', fontWeight: 'bold' }}>BEARISH:</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{bearishCount} ({negPct}%)</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

@@ -347,21 +347,6 @@ h1, h2, h3, h4 {
   animation: radar-sweep 6s linear infinite;
 }
 
-/* Heartbeat Animation for ECG */
-@keyframes ecg-pulse {
-  0% {
-    stroke-dashoffset: 800;
-  }
-  100% {
-    stroke-dashoffset: 0;
-  }
-}
-
-.ecg-line {
-  stroke-dasharray: 800;
-  stroke-dashoffset: 800;
-  animation: ecg-pulse 4s linear infinite;
-}
 
 /* Floating Tickers Animation */
 @keyframes float-slow {
