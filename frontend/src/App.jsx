@@ -1022,6 +1022,40 @@ export default function App() {
             )}
           </div>
 
+          {/* DRIFT MONITOR ALERTS LOG */}
+          <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '350px', overflow: 'hidden' }}>
+            <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
+              <span>STATISTICAL SENTIMENT DRIFT MONITOR ALERTS</span>
+              <span className="badge badge-drift" style={{ fontSize: '9px' }}>|Z| &gt; 2.0</span>
+            </h2>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', paddingRight: '4px' }}>
+              {driftAlerts.length === 0 ? (
+                <div style={{ height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                  [ SENTIMENT STATISTICAL DRIFT DETECTOR ACTIVE // DETECTOR STABLE ]
+                </div>
+              ) : (
+                driftAlerts.map((alert, idx) => (
+                  <div key={idx} style={{ padding: '10px', border: '1px solid rgba(245, 158, 11, 0.15)', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.02)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="badge badge-drift" style={{ fontSize: '10px' }}>
+                        {alert.ticker} DRIFT: {alert.direction.replace('_', ' ').toUpperCase()}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-secondary)' }}>
+                        {alert.alerted_at?.split('T')[1]?.substring(0, 8) || ''}
+                      </span>
+                    </div>
+
+                    <p style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', margin: 0 }}>
+                      Rolling Z-Score: <span style={{ color: 'var(--color-drift)', fontWeight: 'bold' }}>{alert.z_score}</span> &nbsp;
+                      (Threshold: {alert.triggered_threshold})
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
         </section>
 
         {/* RIGHT COLUMN: RADAR, PORTFOLIO & MODEL HEALTH */}
@@ -1209,6 +1243,19 @@ export default function App() {
             <PnLHistoryChart data={portfolioHistory} />
           </div>
 
+          {/* Historical Sentiment Trends Chart */}
+          <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
+              <span>HISTORICAL SENTIMENT TRENDS</span>
+              <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                <span style={{ color: 'var(--color-bullish)' }}>■ POS</span> &nbsp;
+                <span style={{ color: 'var(--color-neutral)' }}>■ NEU</span> &nbsp;
+                <span style={{ color: 'var(--color-bearish)' }}>■ NEG</span>
+              </span>
+            </h2>
+            <SentimentTrendChart data={sentimentTrends} />
+          </div>
+
           {/* MODEL HEALTH & SYSTEM LATENCY PROFILE */}
           <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
@@ -1262,39 +1309,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* DRIFT MONITOR ALERTS LOG */}
-          <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '350px', overflow: 'hidden' }}>
-            <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
-              <span>STATISTICAL SENTIMENT DRIFT MONITOR ALERTS</span>
-              <span className="badge badge-drift" style={{ fontSize: '9px' }}>|Z| &gt; 2.0</span>
-            </h2>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', paddingRight: '4px' }}>
-              {driftAlerts.length === 0 ? (
-                <div style={{ height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-                  [ SENTIMENT STATISTICAL DRIFT DETECTOR ACTIVE // DETECTOR STABLE ]
-                </div>
-              ) : (
-                driftAlerts.map((alert, idx) => (
-                  <div key={idx} style={{ padding: '10px', border: '1px solid rgba(245, 158, 11, 0.15)', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.02)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="badge badge-drift" style={{ fontSize: '10px' }}>
-                        {alert.ticker} DRIFT: {alert.direction.replace('_', ' ').toUpperCase()}
-                      </span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-secondary)' }}>
-                        {alert.alerted_at?.split('T')[1]?.substring(0, 8) || ''}
-                      </span>
-                    </div>
-
-                    <p style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', margin: 0 }}>
-                      Rolling Z-Score: <span style={{ color: 'var(--color-drift)', fontWeight: 'bold' }}>{alert.z_score}</span> &nbsp;
-                      (Threshold: {alert.triggered_threshold})
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
         </section>
 
       </div>
