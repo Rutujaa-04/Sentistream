@@ -151,7 +151,7 @@ Simulates concurrent stream writes and high API endpoint query load:
 
 ## 📐 Architectural Decisions (ADRs)
 
-For a detailed design log, refer to [DECISIONS.md](file:///Users/rutuja/Desktop/SentiStream/DECISIONS.md):
+For a detailed design log, refer to [DECISIONS.md](DECISIONS.md):
 1. **Process-Local Price Feed Singletons**: Avoids shared memory/DB lookups for live quotes. Each backend process uses an independent 30s cache.
 2. **Lightweight HTTP Server for Worker Telemetry**: Starts a Prometheus exporter on port `8001` in the worker process thread, removing Pushgateway dependencies.
 3. **Bypassing `/metrics` tracking**: Excludes scraping routes from Gateway request middleware to avoid skewing real-user traffic metrics.
@@ -159,3 +159,9 @@ For a detailed design log, refer to [DECISIONS.md](file:///Users/rutuja/Desktop/
 5. **Dual ONNX Startup Sessions**: Pre-loads both v1 and v2 models in memory (~210MB footprint) to achieve stable, sub-50ms p99 latency benchmarks from the first request.
 6. **Position Sizing and Scaling**: Allows consecutive buys/sells up to cash limits once the cooldown expires, rather than enforcing a flat-to-active rule.
 7. **Short-Covering Liquidation Symmetry**: Covers short positions (or liquidates long positions) completely when opposing sentiment triggers occur to mitigate risk.
+
+---
+
+## Implementation roadmap
+
+Track completed and pending product, reliability, analytics, and deployment work in [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md). Architectural and code choices are recorded in [DECISIONS.md](DECISIONS.md).

@@ -5,7 +5,7 @@ import time
 import numpy as np
 import onnxruntime as ort
 import structlog
-from transformers import AutoTokenizer
+from tokenizers import Tokenizer
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,23 +59,27 @@ class SentimentModel:
                     "or place a pre-compiled 'finbert-int8.onnx' in the models/ directory."
                 )
 
-        # Fallback to general pre-trained if fine-tuned is not compiled yet
-        # (Allows the pipeline to work even before training runs, ensuring demo stability)
-        self.tokenizer_path = os.path.join(workspace_dir, "models", "checkpoint-best")
-        if not os.path.exists(self.tokenizer_path):
-            # Check if ONNX export directory exists, which contains the local tokenizer copy
-            onnx_tok_path = os.path.join(workspace_dir, "models", "finbert-onnx")
-            if os.path.exists(onnx_tok_path):
-                self.tokenizer_path = onnx_tok_path
-                logger.info("Fine-tuned checkpoint not found. Using local ONNX tokenizer.", source=self.tokenizer_path)
-            else:
-                logger.warning("Fine-tuned checkpoint and local ONNX tokenizer not found. Falling back to default ProsusAI/finbert tokenizer.")
-                self.tokenizer_path = "ProsusAI/finbert"
+        # Use the local tokenizer artifact produced by training/export. The
+        # serving image intentionally does not install the training stack.
+        tokenizer_candidates = [
+            os.path.join(workspace_dir, "models", "checkpoint-best", "tokenizer.json"),
+            os.path.join(workspace_dir, "models", "finbert-onnx", "tokenizer.json"),
+        ]
+        tokenizer_file = next(
+            (candidate for candidate in tokenizer_candidates if os.path.isfile(candidate)),
+            None,
+        )
+        if tokenizer_file is None:
+            raise FileNotFoundError(
+                "Tokenizer assets not found. Export the model first so "
+                "models/finbert-onnx/tokenizer.json is available."
+            )
 
-        # Initialize Tokenizer (reads from local cache volume once downloaded)
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-            logger.info("Tokenizer loaded successfully", source=self.tokenizer_path)
+            self.tokenizer = Tokenizer.from_file(tokenizer_file)
+            self.tokenizer.enable_truncation(max_length=128)
+            self.tokenizer.enable_padding(length=128)
+            logger.info("Tokenizer loaded successfully", source=tokenizer_file)
         except Exception as e:
             logger.error("Failed to load tokenizer", error=str(e))
             raise e
@@ -128,21 +132,15 @@ class SentimentModel:
 
         # 2. Tokenize Input Text (Max BERT tokens: 128 for financial headlines)
         t0 = time.perf_counter()
-        inputs = self.tokenizer(
-            text, 
-            return_tensors="np", 
-            padding=True, 
-            truncation=True, 
-            max_length=128
-        )
+        encoded = self.tokenizer.encode(text)
         t_tokenized = time.perf_counter()
         tokenization_latency = (t_tokenized - t0) * 1000.0
 
         # 3. Format inputs for ONNX Runner
         onnx_inputs = {
-            "input_ids": inputs["input_ids"].astype(np.int64),
-            "attention_mask": inputs["attention_mask"].astype(np.int64),
-            "token_type_ids": inputs["token_type_ids"].astype(np.int64),
+            "input_ids": np.asarray([encoded.ids], dtype=np.int64),
+            "attention_mask": np.asarray([encoded.attention_mask], dtype=np.int64),
+            "token_type_ids": np.asarray([encoded.type_ids], dtype=np.int64),
         }
 
         # 4. Execute ONNX Inference Run

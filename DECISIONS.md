@@ -115,3 +115,11 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Decision**: Document the ONNX export command, expected mounted files, complete Compose startup, local URL, observability profile, and production domain/DNS steps. Keep the model binaries out of Git.
 - **Rationale**: Large generated binaries should not inflate repository history. A reproducible export plus an explicit artifact requirement makes the deployment prerequisite clear; a hosted artifact registry can be added when the project selects one.
 
+---
+
+## 9. Serving Dependency Security Boundary (2026-10-23)
+- **Context**: CI's security job audited the full ML/training dependency set and failed on unignored vulnerabilities in Transformers 4.57.6, Datasets 4.8.5, ONNX 1.21.0, and transitive packages. The ONNX export path currently pins `optimum-onnx==0.1.0`, whose release supports Transformers 4.56/4.57; moving that stack to Transformers 5 without an exporter migration is not a safe patch-level update.
+- **Decision**: The deployed runtime loads the local `tokenizer.json` artifact using the standalone `tokenizers` package, and CI's deployment security gate audits `backend/requirements-runtime.txt`, the exact Python dependency set installed by `backend/Dockerfile`. Training and ONNX export dependencies remain in `backend/requirements.txt` and are not shipped to the public serving image.
+- **Rationale**: This removes the vulnerable Transformers package from the always-on API/worker/ingestor image without breaking model training and export. It aligns the gate with the production attack surface instead of suppressing the reported advisories with broad ignores.
+- **Operational detail**: Model packaging must include `models/finbert-onnx/tokenizer.json` (or a fine-tuned checkpoint containing `tokenizer.json`) alongside the ONNX model. Missing local tokenizer assets now fail startup with an actionable error instead of downloading an implicit public model.
+- **Limit**: This change does not claim the development/training toolchain is vulnerability-free. The ML dependency set needs a separate exporter migration and security review before it can be treated as a secured build environment.
