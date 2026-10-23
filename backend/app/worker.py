@@ -260,17 +260,15 @@ class ConsumerWorker:
             "error_message": error_msg
         }
         
-        # Keep DLQ persistence, source acknowledgement, and retry cleanup atomic.
-        async with self.redis_client.pipeline(transaction=True) as pipeline:
-            pipeline.xadd(
-                "dlq_headlines",
-                fields=dlq_payload,
-                maxlen=500,
-                approximate=True,
-            )
-            pipeline.xack("raw_headlines", "sentistream_workers", raw_message_id)
-            pipeline.hdel("sentistream:stream:retry-counts", raw_message_id)
-            await pipeline.execute()
+        # Persist the failure record before acknowledging the source message.
+        await self.redis_client.xadd(
+            name="dlq_headlines",
+            fields=dlq_payload,
+            maxlen=500,
+            approximate=True,
+        )
+        await self.redis_client.xack("raw_headlines", "sentistream_workers", raw_message_id)
+        await self.redis_client.hdel("sentistream:stream:retry-counts", raw_message_id)
 
     async def handle_processing_failure(self, message_id: str, fields: dict, error_msg: str):
         """Retry unexpected failures by leaving them pending, then DLQ at the limit."""
@@ -692,10 +690,8 @@ class ConsumerWorker:
                 await self.redis_client.publish("sentistream:sentiment_events", json.dumps(alert_payload))
 
             # 6. Acknowledge message as processed
-            async with self.redis_client.pipeline(transaction=True) as pipeline:
-                pipeline.xack("raw_headlines", "sentistream_workers", message_id)
-                pipeline.hdel("sentistream:stream:retry-counts", message_id)
-                await pipeline.execute()
+            await self.redis_client.xack("raw_headlines", "sentistream_workers", message_id)
+            await self.redis_client.hdel("sentistream:stream:retry-counts", message_id)
             logger.info("Successfully processed message", message_id=message_id, ticker=ticker, sentiment=inference["label"])
 
         except KeyError as e:
