@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -372,6 +373,55 @@ class ClickHouseDatabase:
         """Truncates the paper_trades table in ClickHouse."""
         query = "TRUNCATE TABLE paper_trades"
         await self.execute(query)
+
+    async def insert_portfolio_snapshot(self, snapshot: Dict[str, Any]):
+        """Persists a point-in-time mark of current paper portfolio equity."""
+        query = """
+            INSERT INTO portfolio_snapshots (
+                snapshot_at, portfolio_value_usd, cash_usd, realized_pnl_usd,
+                unrealized_pnl_usd, total_pnl_usd, pricing_quality, positions_json
+            ) VALUES
+        """
+        snapshot_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        row = (
+            snapshot_at,
+            float(snapshot["portfolio_value_usd"]),
+            float(snapshot["cash_usd"]),
+            float(snapshot["realized_pnl_usd"]),
+            float(snapshot["unrealized_pnl_usd"]),
+            float(snapshot["total_pnl_usd"]),
+            str(snapshot["pricing_quality"]),
+            json.dumps(snapshot["positions"], separators=(",", ":")),
+        )
+        await self.execute(query, [row])
+
+    async def query_portfolio_snapshots(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Returns the most recent persisted equity marks in chronological order."""
+        query = f"""
+            SELECT snapshot_at, portfolio_value_usd, cash_usd, realized_pnl_usd,
+                   unrealized_pnl_usd, total_pnl_usd, pricing_quality, positions_json
+            FROM portfolio_snapshots
+            ORDER BY snapshot_at DESC
+            LIMIT {int(limit)}
+        """
+        rows = await self.execute(query)
+        results = []
+        for snapshot_at, value, cash, realized, unrealized, total, quality, positions_json in reversed(rows):
+            results.append({
+                "timestamp": snapshot_at.isoformat() + "Z" if hasattr(snapshot_at, "isoformat") else str(snapshot_at),
+                "portfolio_value": round(float(value), 2),
+                "cash": round(float(cash), 2),
+                "realized_pnl": round(float(realized), 2),
+                "unrealized_pnl": round(float(unrealized), 2),
+                "total_pnl": round(float(total), 2),
+                "pricing_quality": quality,
+                "positions": json.loads(positions_json),
+            })
+        return results
+
+    async def clear_portfolio_snapshots(self):
+        """Clears snapshot history when the paper portfolio is reset."""
+        await self.execute("TRUNCATE TABLE portfolio_snapshots")
 
 
     async def query_ab_stats(self) -> List[Dict[str, Any]]:

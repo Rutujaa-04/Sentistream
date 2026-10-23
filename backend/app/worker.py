@@ -71,6 +71,7 @@ class ConsumerWorker:
         self.last_reclaim_time = 0.0
         self.backlog_task: Optional[asyncio.Task] = None
         self.settings_listener_task: Optional[asyncio.Task] = None
+        self.portfolio_snapshot_task: Optional[asyncio.Task] = None
         self.is_running = True
 
     async def initialize(self):
@@ -738,6 +739,22 @@ class ConsumerWorker:
                 logger.error("Failed to query stream queue backlogs or reset quiet ticker gauges", error=str(e))
             await asyncio.sleep(5)
 
+    async def record_portfolio_snapshots(self):
+        """Persists periodic mark-to-market values for drawdown analytics."""
+        while self.is_running:
+            try:
+                state = await self.portfolio_service.reconstruct_portfolio()
+                await self.db.insert_portfolio_snapshot(state)
+                logger.info(
+                    "Persisted portfolio valuation snapshot",
+                    value=state["portfolio_value_usd"],
+                    pricing_quality=state["pricing_quality"],
+                    positions=len(state["positions"]),
+                )
+            except Exception as e:
+                logger.error("Failed to persist portfolio valuation snapshot", error=str(e))
+            await asyncio.sleep(settings.PORTFOLIO_SNAPSHOT_INTERVAL_SECONDS)
+
     async def start_consuming(self):
         """Starts the Redis consumer loop utilizing consumer group offsets."""
         logger.info("Consumer loop started. Reading stream raw_headlines...")
@@ -746,6 +763,8 @@ class ConsumerWorker:
         self.backlog_task = asyncio.create_task(self.record_queue_backlogs())
         # Start background settings updates listener task
         self.settings_listener_task = asyncio.create_task(self.listen_settings_updates())
+        # Persist one current valuation immediately, then at the configured interval.
+        self.portfolio_snapshot_task = asyncio.create_task(self.record_portfolio_snapshots())
         
         while self.is_running:
             try:
@@ -795,6 +814,12 @@ class ConsumerWorker:
             self.settings_listener_task.cancel()
             try:
                 await self.settings_listener_task
+            except asyncio.CancelledError:
+                pass
+        if self.portfolio_snapshot_task:
+            self.portfolio_snapshot_task.cancel()
+            try:
+                await self.portfolio_snapshot_task
             except asyncio.CancelledError:
                 pass
         if self.trading_engine and hasattr(self.trading_engine, "close"):

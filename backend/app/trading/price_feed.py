@@ -24,6 +24,7 @@ class PriceFeed:
         # Prevent re-initialization if __init__ is called multiple times on the singleton
         if not hasattr(self, "initialized"):
             self.cache: Dict[str, Tuple[float, float]] = {}  # ticker -> (price, timestamp)
+            self.quote_sources: Dict[str, str] = {}
             self.session = None
             self.api_key = settings.FINNHUB_API_KEY
             self.fallback_prices = {
@@ -77,6 +78,7 @@ class PriceFeed:
                                 # Add +/- 1% fluctuation to simulate market movement for demo runs
                                 price_val = round(price_val * (1.0 + random.uniform(-0.01, 0.01)), 2)
                             self.cache[ticker] = (price_val, now)
+                            self.quote_sources[ticker] = "finnhub"
                             logger.info("Fetched live quote from Finnhub API", ticker=ticker, price=price_val)
                             return price_val
                         else:
@@ -100,5 +102,10 @@ class PriceFeed:
         fallback_price = round(base_fallback * (1.0 + jitter), 2)
         # Cache mock prices with an artificially shifted timestamp to expire in 1s (allows quick consecutive trade updates)
         self.cache[ticker] = (fallback_price, now - 29.0)
+        self.quote_sources[ticker] = "simulated_fallback"
         logger.warning("Serving mock fallback price (warning: stale metrics)", ticker=ticker, price=fallback_price)
         return fallback_price
+
+    def get_price_source(self, ticker: str) -> str:
+        """Returns the source for the most recent cached quote for a ticker."""
+        return self.quote_sources.get(ticker.strip().upper(), "unknown")
