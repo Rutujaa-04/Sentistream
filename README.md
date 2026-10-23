@@ -34,7 +34,8 @@ The system processes financial news feeds through an event queue, routes them de
 ### 4. Trade Ledger Reconstruction
 * Reconstructs the portfolio cash, position ledger, realized/unrealized P&L, and win-rate metrics directly from ClickHouse trade history using `PortfolioService`.
 * Handles short sale proceeds (added to cash at execution time) and short covering costs (subtracted from cash) without double-counting position liabilities.
-* The historical curve is reconstructed at trade timestamps using transaction prices; it is not a periodic historical market-to-market series.
+* The dashboard stores periodic equity and holdings marks in ClickHouse and shows the quote source, observation count, and sampled maximum drawdown. Finnhub marks are labeled live; fallback marks are labeled simulated.
+* Benchmark-relative returns are not reported because the project does not yet persist a matching benchmark price series.
 
 ### 5. MLOps Telemetry (Prometheus & Grafana)
 * Tracks tokenization/inference latency histograms, processed throughput count, rolling Z-score sentiment drift, portfolio cash/valuation, and stream backlogs.

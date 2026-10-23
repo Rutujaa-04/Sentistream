@@ -61,7 +61,22 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 ORDER BY (ticker, executed_at)
 SETTINGS index_granularity = 8192;
 
+-- 5. Table: portfolio_snapshots
+-- Periodic point-in-time account marks. These are snapshots, not tick-level prices.
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    snapshot_at DateTime64(3, 'UTC'),
+    portfolio_value_usd Float64,
+    cash_usd Float64,
+    realized_pnl_usd Float64,
+    unrealized_pnl_usd Float64,
+    total_pnl_usd Float64,
+    pricing_quality String,
+    positions_json String
+) ENGINE = MergeTree()
+ORDER BY snapshot_at
+TTL snapshot_at + INTERVAL 365 DAY
+SETTINGS index_granularity = 8192;
+
 -- Migration: Add model_version column to headlines & telemetry
 ALTER TABLE headlines ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
 ALTER TABLE inference_telemetry ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
-

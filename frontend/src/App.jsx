@@ -250,19 +250,18 @@ function PnLHistoryChart({ data }) {
   if (!data || data.length === 0) {
     return (
       <div style={{ height: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4B5563', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
-        [ NO HISTORICAL TRADES FOUND // WAITING FOR STRATEGY EXECUTION ]
+        [ NO PORTFOLIO SNAPSHOTS YET // FIRST MARK IS RECORDED AT WORKER STARTUP ]
       </div>
     );
   }
 
   // Find min and max total P&L to scale Y axis dynamically
   const pnlVals = data.map(d => d.total_pnl);
-  const maxVal = Math.max(...pnlVals, 1000.0);
-  const minVal = Math.min(...pnlVals, -1000.0);
-  
-  // Scale Y axis with padding
-  const yMax = Math.ceil(maxVal / 500) * 500 + 100;
-  const yMin = Math.floor(minVal / 500) * 500 - 100;
+  const maxVal = Math.max(...pnlVals);
+  const minVal = Math.min(...pnlVals);
+  const rangePadding = Math.max((maxVal - minVal) * 0.1, 10);
+  const yMax = maxVal + rangePadding;
+  const yMin = minVal - rangePadding;
   const yRange = yMax - yMin;
 
   // SVG dimensions
@@ -276,7 +275,9 @@ function PnLHistoryChart({ data }) {
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
 
-  const getX = (index) => paddingLeft + (index / (data.length - 1)) * chartWidth;
+  const getX = (index) => data.length === 1
+    ? paddingLeft + chartWidth / 2
+    : paddingLeft + (index / (data.length - 1)) * chartWidth;
   const getY = (val) => paddingTop + chartHeight - ((val - yMin) / yRange) * chartHeight;
 
   // Generate SVG path string
@@ -350,6 +351,7 @@ export default function App() {
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
+  const [portfolioAnalytics, setPortfolioAnalytics] = useState({ observations: 0, max_sampled_drawdown_pct: 0 });
   const [strategyMode, setStrategyMode] = useState('long_only');
   const [dashboardControlsEnabled, setDashboardControlsEnabled] = useState(false);
   
@@ -400,6 +402,16 @@ export default function App() {
   
   const p99Latency = latencyHistory.length > 0 ? latencyHistory[latencyHistory.length - 1].p99_ms : 0;
   const averageLatency = latencyHistory.length > 0 ? (latencyHistory.reduce((sum, d) => sum + d.p50_ms, 0) / latencyHistory.length).toFixed(1) : 0;
+  const historicalPriceSources = [...new Set(portfolioHistory.map(snapshot => snapshot.pricing_quality))];
+  const historicalPriceLabel = historicalPriceSources.length === 0
+    ? 'AWAITING FIRST SNAPSHOT'
+    : historicalPriceSources.length > 1
+      ? 'MIXED HISTORICAL PRICE SOURCES'
+      : historicalPriceSources[0] === 'live'
+        ? 'LIVE FINNHUB MARKS'
+        : historicalPriceSources[0] === 'simulated_fallback'
+          ? 'SIMULATED PRICE MARKS'
+          : 'CASH ONLY / UNKNOWN PRICE SOURCE';
 
   // 1. Fetch REST API datasets from ClickHouse and health check endpoint
   const fetchTelemetryData = async () => {
@@ -456,11 +468,12 @@ export default function App() {
         setAbStats(abData.data || []);
       }
 
-      // Portfolio History
-      const historyRes = await fetch(`${API_BASE_URL}/api/v1/portfolio/history`);
+      // Persisted mark-to-market snapshots and sampled drawdown
+      const historyRes = await fetch(`${API_BASE_URL}/api/v1/portfolio/analytics`);
       if (historyRes.ok) {
         const historyData = await historyRes.json();
         setPortfolioHistory(historyData.data || []);
+        setPortfolioAnalytics(historyData);
       }
 
       // Strategy settings
@@ -1174,6 +1187,12 @@ export default function App() {
                     ${portfolio?.realized_pnl_usd !== undefined ? (portfolio.realized_pnl_usd >= 0 ? '+' : '') + portfolio.realized_pnl_usd.toFixed(2) : '0.00'}
                   </div>
                 </div>
+                <div>
+                  <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>MAX DRAWDOWN · SAMPLED</span>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', fontFamily: 'var(--font-mono)', color: 'var(--color-bearish)' }}>
+                    {portfolioAnalytics.observations > 0 ? `${portfolioAnalytics.max_sampled_drawdown_pct.toFixed(2)}%` : '—'}
+                  </div>
+                </div>
               </div>
 
               {/* Radial Win Rate Progress */}
@@ -1255,9 +1274,12 @@ export default function App() {
           {/* Historical P&L Chart */}
           <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', margin: 0 }}>
-              PORTFOLIO HISTORICAL P&L PATH
+              PORTFOLIO MARK-TO-MARKET HISTORY
             </h2>
             <PnLHistoryChart data={portfolioHistory} />
+            <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+              {portfolioAnalytics.observations} latest snapshots · {portfolioAnalytics.snapshot_interval_seconds || 60}s target interval · {historicalPriceLabel} · Benchmark comparison not measured.
+            </p>
           </div>
 
           {/* Historical Sentiment Trends Chart */}

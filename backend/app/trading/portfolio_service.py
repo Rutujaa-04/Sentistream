@@ -117,6 +117,7 @@ class PortfolioService:
         enriched_positions = []
         total_market_value = 0.0
         total_unrealized_pnl = 0.0
+        price_sources = set()
 
         for ticker, pos_data in positions.items():
             shares = pos_data["shares"]
@@ -131,6 +132,12 @@ class PortfolioService:
                 current_price = await self.price_feed.get_price(ticker)
                 market_value = shares * current_price
                 unrealized_pnl = total_cost + market_value
+
+            source_getter = getattr(self.price_feed, "get_price_source", None)
+            price_source = source_getter(ticker) if callable(source_getter) else "unknown"
+            if not isinstance(price_source, str) or price_source not in {"finnhub", "simulated_fallback"}:
+                price_source = "unknown"
+            price_sources.add(price_source)
             
             total_market_value += market_value
             total_unrealized_pnl += unrealized_pnl
@@ -141,7 +148,8 @@ class PortfolioService:
                 "avg_price": round(avg_price, 2),
                 "current_price": round(current_price, 2),
                 "market_value": round(market_value, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2)
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "price_source": price_source,
             })
 
         # Calculate win rate
@@ -149,6 +157,14 @@ class PortfolioService:
         win_rate = float(closed_wins) / total_closed_trades if total_closed_trades > 0 else 0.0
         
         portfolio_value = cash + total_market_value
+        if not price_sources:
+            pricing_quality = "cash_only"
+        elif price_sources == {"finnhub"}:
+            pricing_quality = "live"
+        elif price_sources == {"simulated_fallback"}:
+            pricing_quality = "simulated_fallback"
+        else:
+            pricing_quality = "mixed_or_unknown"
 
         state = {
             "portfolio_value_usd": round(portfolio_value, 2),
@@ -158,6 +174,7 @@ class PortfolioService:
             "total_pnl_usd": round(realized_pnl + total_unrealized_pnl, 2),
             "win_rate": round(win_rate, 2),
             "total_trades": total_trades,
+            "pricing_quality": pricing_quality,
             "positions": enriched_positions
         }
 
@@ -181,9 +198,18 @@ class PortfolioService:
         
         history = []
         
-        # Add initial starting point
+        # Anchor the starting capital to the first observed transaction rather
+        # than presenting an invented portfolio inception date.
+        if not raw_trades:
+            return history
+        first_trade_time = raw_trades[0]["executed_at"]
+        first_timestamp = (
+            first_trade_time.isoformat() + "Z"
+            if hasattr(first_trade_time, "isoformat")
+            else str(first_trade_time)
+        )
         history.append({
-            "timestamp": "2026-06-01T00:00:00Z",
+            "timestamp": first_timestamp,
             "portfolio_value": float(settings.INITIAL_PORTFOLIO_CAPITAL),
             "cash": float(settings.INITIAL_PORTFOLIO_CAPITAL),
             "realized_pnl": 0.0,
@@ -292,3 +318,30 @@ class PortfolioService:
             })
             
         return history
+
+    async def get_portfolio_analytics(self, limit: int = 1000) -> Dict[str, Any]:
+        """Returns persisted mark-to-market snapshots with sampled drawdown."""
+        snapshots = await self.db.query_portfolio_snapshots(limit=limit)
+        peak_value = float(settings.INITIAL_PORTFOLIO_CAPITAL)
+        max_drawdown_usd = 0.0
+        max_drawdown_pct = 0.0
+
+        for snapshot in snapshots:
+            value = float(snapshot["portfolio_value"])
+            peak_value = max(peak_value, value)
+            drawdown_usd = max(0.0, peak_value - value)
+            drawdown_pct = drawdown_usd / peak_value * 100.0 if peak_value > 0 else 0.0
+            snapshot["drawdown_usd"] = round(drawdown_usd, 2)
+            snapshot["drawdown_pct"] = round(drawdown_pct, 4)
+            max_drawdown_usd = max(max_drawdown_usd, drawdown_usd)
+            max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
+
+        return {
+            "data": snapshots,
+            "observations": len(snapshots),
+            "max_sampled_drawdown_usd": round(max_drawdown_usd, 2),
+            "max_sampled_drawdown_pct": round(max_drawdown_pct, 4),
+            "sample_scope": "latest_snapshots",
+            "benchmark_relative_performance": "not_measured",
+            "snapshot_interval_seconds": settings.PORTFOLIO_SNAPSHOT_INTERVAL_SECONDS,
+        }

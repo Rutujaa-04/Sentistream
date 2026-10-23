@@ -132,3 +132,13 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Rationale**: Redis Streams provides durable pending ownership and idle-age based recovery without introducing a separate broker. Keeping retry counts in Redis allows another worker to continue the retry budget after a process restart.
 - **Telemetry**: Report unacknowledged count, oldest pending idle age, scheduled retry count, and retained DLQ length. The age metric is pending idle time since last delivery, not total time since the headline was ingested.
 - **Trade-off**: Delivery is at least once. A failure after an external or database side effect can cause that headline to be processed again; idempotent trade execution and persistence remain necessary before scaling to multiple workers or live broker execution.
+
+---
+
+## 11. Periodic Portfolio Marks and Sampled Drawdown (2026-10-24)
+- **Context**: The existing historical curve replayed each trade at its transaction price, used a fabricated initial timestamp, and could not show market movement between trades. Current portfolio state already distinguishes realized from unrealized P&L, but no historical equity marks were persisted.
+- **Decision**: The worker reconstructs the current paper portfolio and persists equity, cash, realized/unrealized/total P&L, quote-source quality, and holdings every `PORTFOLIO_SNAPSHOT_INTERVAL_SECONDS` (60 seconds by default). ClickHouse retains snapshots for 365 days; the API returns the latest bounded sample (default 1,000 points) with drawdown measured against the initial capital and prior sampled peaks.
+- **Rationale**: A periodic ledger-derived mark-to-market series exposes the value of open positions across time, while the stored holdings and P&L split preserve an audit trail of each observation. A bounded history keeps dashboard payload and query size predictable.
+- **Data quality**: Finnhub marks are labeled `live`; fallback quote marks are labeled `simulated_fallback`; mixed or unavailable source metadata is explicit. The dashboard shows observation count and sample scope. The sample maximum drawdown is not presented as a full tick-level risk estimate.
+- **Reset behavior**: Portfolio reset truncates both trade history and snapshot history to avoid mixing portfolios in the same series.
+- **Limit**: Benchmark-relative performance remains unmeasured until a persistent benchmark price series with aligned timestamps is implemented. Snapshot history is sampled at the worker's configured cadence, so moves between observations can be missed.
