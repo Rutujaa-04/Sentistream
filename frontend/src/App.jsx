@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const WEBSOCKET_BASE_URL = import.meta.env.VITE_WEBSOCKET_BASE_URL || '';
+
+function websocketUrl(path) {
+  if (WEBSOCKET_BASE_URL) return `${WEBSOCKET_BASE_URL}${path}`;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}${path}`;
+}
+
 // ==========================================
 // CUSTOM SVG CHART COMPONENT: LATENCY PERCENTILES
 // ==========================================
@@ -342,11 +351,12 @@ export default function App() {
   const [abStats, setAbStats] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [strategyMode, setStrategyMode] = useState('long_only');
+  const [dashboardControlsEnabled, setDashboardControlsEnabled] = useState(false);
   
   const handleStrategyChange = async (newMode) => {
     setStrategyMode(newMode);
     try {
-      await fetch('http://localhost:8000/api/v1/settings', {
+      await fetch(`${API_BASE_URL}/api/v1/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -361,7 +371,7 @@ export default function App() {
   const handleResetPortfolio = async () => {
     if (window.confirm("Are you sure you want to clear all trade history and reset the portfolio to $100,000.00?")) {
       try {
-        await fetch('http://localhost:8000/api/v1/portfolio/reset', {
+        await fetch(`${API_BASE_URL}/api/v1/portfolio/reset`, {
           method: 'POST'
         });
         fetchTelemetryData();
@@ -397,14 +407,14 @@ export default function App() {
       const tickerParam = selectedTicker === 'ALL' ? '' : `&ticker=${selectedTicker}`;
       
       // Ping check
-      const pingRes = await fetch('http://localhost:8000/ping');
+      const pingRes = await fetch(`${API_BASE_URL}/ping`);
       if (pingRes.ok) {
         const pingData = await pingRes.json();
         setBackendPing(pingData);
       }
 
       // Recent headlines
-      const headlinesRes = await fetch(`http://localhost:8000/api/v1/headlines?limit=20${tickerParam}`);
+      const headlinesRes = await fetch(`${API_BASE_URL}/api/v1/headlines?limit=20${tickerParam}`);
       if (headlinesRes.ok) {
         const headlinesData = await headlinesRes.json();
         setHeadlines(headlinesData.data);
@@ -412,52 +422,53 @@ export default function App() {
       }
 
       // Latency Percentiles (1 hour window)
-      const latRes = await fetch('http://localhost:8000/api/v1/latency-percentiles?window=1h');
+      const latRes = await fetch(`${API_BASE_URL}/api/v1/latency-percentiles?window=1h`);
       if (latRes.ok) {
         const latData = await latRes.json();
         setLatencyHistory(latData.data);
       }
 
       // Sentiment Trends (6 hour window)
-      const trendsRes = await fetch(`http://localhost:8000/api/v1/sentiment-trends?hours=6${tickerParam}`);
+      const trendsRes = await fetch(`${API_BASE_URL}/api/v1/sentiment-trends?hours=6${tickerParam}`);
       if (trendsRes.ok) {
         const trendsData = await trendsRes.json();
         setSentimentTrends(trendsData.data);
       }
 
       // Drift Alerts
-      const driftRes = await fetch(`http://localhost:8000/api/v1/drift-alerts?limit=10${tickerParam}`);
+      const driftRes = await fetch(`${API_BASE_URL}/api/v1/drift-alerts?limit=10${tickerParam}`);
       if (driftRes.ok) {
         const driftData = await driftRes.json();
         setDriftAlerts(driftData.alerts);
       }
 
       // Paper Portfolio Summary
-      const portRes = await fetch('http://localhost:8000/api/v1/portfolio');
+      const portRes = await fetch(`${API_BASE_URL}/api/v1/portfolio`);
       if (portRes.ok) {
         const portData = await portRes.json();
         setPortfolio(portData);
       }
 
-      // Model A/B Performance Stats
-      const abRes = await fetch('http://localhost:8000/api/v1/ab-stats');
+      // Routing-slot latency statistics (not a model-quality comparison)
+      const abRes = await fetch(`${API_BASE_URL}/api/v1/ab-stats`);
       if (abRes.ok) {
         const abData = await abRes.json();
         setAbStats(abData.data || []);
       }
 
       // Portfolio History
-      const historyRes = await fetch('http://localhost:8000/api/v1/portfolio/history');
+      const historyRes = await fetch(`${API_BASE_URL}/api/v1/portfolio/history`);
       if (historyRes.ok) {
         const historyData = await historyRes.json();
         setPortfolioHistory(historyData.data || []);
       }
 
       // Strategy settings
-      const settingsRes = await fetch('http://localhost:8000/api/v1/settings');
+      const settingsRes = await fetch(`${API_BASE_URL}/api/v1/settings`);
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json();
         setStrategyMode(settingsData.strategy_mode);
+        setDashboardControlsEnabled(settingsData.controls_enabled === true);
       }
     } catch (e) {
       console.error("Rest queries failed", e);
@@ -471,7 +482,7 @@ export default function App() {
     }
 
     setConnectionStatus('connecting');
-    const ws = new WebSocket('ws://localhost:8000/ws');
+    const ws = new WebSocket(websocketUrl('/ws'));
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -686,43 +697,49 @@ export default function App() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderLeft: '1px solid var(--border-light)', paddingLeft: '16px' }}>
-              <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>MODE:</span>
-              <select
-                value={strategyMode}
-                onChange={(e) => handleStrategyChange(e.target.value)}
-                style={{
-                  background: '#090d1a',
-                  color: '#FFF',
-                  border: '1px solid var(--border-light)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '11px',
-                  padding: '4px 8px',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  outline: 'none'
-                }}
-              >
-                <option value="long_only">LONG-ONLY</option>
-                <option value="long_short">LONG-SHORT</option>
-              </select>
-              <button
-                onClick={handleResetPortfolio}
-                style={{
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  color: 'var(--color-bearish)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                  padding: '4px 8px',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  outline: 'none',
-                  transition: 'all 0.2s'
-                }}
-              >
-                RESET
-              </button>
+              {dashboardControlsEnabled ? (
+                <>
+                  <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>MODE:</span>
+                  <select
+                    value={strategyMode}
+                    onChange={(e) => handleStrategyChange(e.target.value)}
+                    style={{
+                      background: '#090d1a',
+                      color: '#FFF',
+                      border: '1px solid var(--border-light)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '11px',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="long_only">LONG-ONLY</option>
+                    <option value="long_short">LONG-SHORT</option>
+                  </select>
+                  <button
+                    onClick={handleResetPortfolio}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.15)',
+                      color: 'var(--color-bearish)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      outline: 'none',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    RESET
+                  </button>
+                </>
+              ) : (
+                <span className="badge badge-neutral">READ-ONLY DEMO</span>
+              )}
             </div>
           </div>
         </div>
@@ -1190,9 +1207,9 @@ export default function App() {
                 </div>
               </div>
               <div>
-                <span style={{ color: 'var(--text-secondary)' }}>SIGNAL EFFECTIVENESS:</span>
+                <span style={{ color: 'var(--text-secondary)' }}>SIGNAL QUALITY:</span>
                 <div style={{ color: 'var(--color-neutral)', fontWeight: 'bold', fontSize: '12px', marginTop: '2px' }}>
-                  {portfolio?.total_trades ? `Correlation: +${(0.7 + (portfolio.win_rate || 0) * 0.2).toFixed(2)}` : 'N/A'}
+                  Not measured
                 </div>
               </div>
             </div>
@@ -1256,7 +1273,7 @@ export default function App() {
             <SentimentTrendChart data={sentimentTrends} />
           </div>
 
-          {/* MODEL HEALTH & SYSTEM LATENCY PROFILE */}
+            {/* MODEL ROUTING TELEMETRY & SYSTEM LATENCY PROFILE */}
           <div className="intelligence-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h2 style={{ fontSize: '13px', letterSpacing: '0.08em', color: '#FFF', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', display: 'flex', justifyContent: 'space-between', margin: 0 }}>
               <span>SYSTEM LATENCY PROFILE percentiles</span>
@@ -1268,7 +1285,9 @@ export default function App() {
             </h2>
             <LatencyChart data={latencyHistory} />
             
-            {/* A/B Session Health */}
+            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+              Routing-slot counts and latency only; model quality comparison is not available.
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '8px' }}>
               {['v1', 'v2'].map(version => {
                 const stats = abStats.find(s => s.model_version === version) || {
@@ -1286,7 +1305,7 @@ export default function App() {
                   <div key={version} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${borderCol}`, background: 'rgba(255,255,255,0.01)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${borderCol}`, paddingBottom: '6px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#FFF', fontFamily: 'var(--font-mono)' }}>
-                        MODEL {version.toUpperCase()} {isV2 ? '(CHALLENGER)' : '(CHAMPION)'}
+                        ROUTING SLOT {version.toUpperCase()}
                       </span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>

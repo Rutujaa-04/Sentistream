@@ -69,5 +69,49 @@ This file documents the key design decisions, trade-offs, and rationale behind S
   - **Risk Management**: Short positions carry unlimited theoretical risk. Fully covering on a reverse sentiment signal ensures that the portfolio immediately stops losing money if market sentiment shifts against the short position.
   - **Sizing Simplicity**: Avoids hanging short position remnants or complex multi-step partial coverage that would complicate demo P&L tracking and lead to outsized realized P&L swings.
 
+---
 
+## 8. Production-Readiness and Hosted-Demo Decisions (2026-10-23)
+
+### 8.1 Compose as the first deployment target
+- **Context**: The repository had a Compose file for infrastructure only, while the API, worker, ingestor, and frontend were launched manually. A public demo needs one reproducible deployment surface.
+- **Decision**: Extend Docker Compose to run the complete app on one host. Build one backend image and run it with separate API, worker, and ingestor commands; build the React site into an Nginx image; place Caddy in front for public HTTP(S).
+- **Rationale**: This keeps the existing Redis/ClickHouse architecture and provides the simplest migration from local demo to a small VM. It avoids introducing Kubernetes or an orchestrator before the project needs horizontal scaling.
+
+### 8.2 Same-origin browser routes and WebSocket scheme
+- **Context**: Browser requests were hardcoded to `localhost`, which points to each visitor's own machine after deployment, and the WebSocket URL used unencrypted `ws://`.
+- **Decision**: Default frontend calls to same-origin `/api`, `/ping`, `/health`, and `/ws`. Derive `ws:` versus `wss:` from the page protocol, allow explicit Vite build-time API/WebSocket overrides, and proxy API and WebSocket traffic through Nginx.
+- **Rationale**: Same-origin routing keeps production API calls on the deployed host, avoids CORS as a requirement for the standard deployment, and selects secure WebSockets automatically under HTTPS.
+
+### 8.3 Public deployment boundaries
+- **Context**: The API included unauthenticated test injection, strategy mutation, and portfolio reset endpoints. Redis, ClickHouse, API, and monitoring services should not be reachable from the public network.
+- **Decision**: Test injection and dashboard controls are disabled by default and forcibly disabled when `APP_ENV=production`. Publish only Caddy's 80/443 ports; keep app/data services on the private Compose network. Bind optional Prometheus/Grafana host ports to loopback.
+- **Rationale**: A public showcase should be read-only until a real authentication and authorization layer exists. Hiding buttons alone is insufficient, so the backend also rejects those writes. Loopback-bound monitoring supports SSH-tunnel access without exposing admin tools.
+- **Code detail**: Ticker query filters accept only a bounded ticker-symbol character set before they reach interpolated ClickHouse filters.
+
+### 8.4 Configuration precedence
+- **Context**: The settings loader read process environment first and then overwrote it with `.env`, which could make container or hosting configuration silently lose to a local file.
+- **Decision**: Apply configuration in the order defaults, `.env`, then process environment.
+- **Rationale**: Host-provided settings and secrets must override developer-local values in containers and hosted deployments.
+
+### 8.5 Readiness reflects ONNX initialization
+- **Context**: Startup logged an ONNX model load failure but `/ping` and `/health` still claimed the model was available.
+- **Decision**: Track successful model initialization and return degraded/unavailable readiness when it fails.
+- **Rationale**: Orchestrators and operators need health endpoints to describe actual serving capability so an incomplete demo is not presented as ready.
+
+### 8.6 Analytics claims and model routing labels
+- **Context**: The UI displayed a correlation value derived from a fixed formula, and described `v1`/`v2` as champion/challenger even though missing model files are copied from the same base artifact.
+- **Decision**: Replace the derived correlation with “Not measured” and relabel the version cards as routing slots, with an explicit note that they report traffic/latency and do not compare model quality.
+- **Rationale**: Show only measured analytics and distinguish operational routing telemetry from a valid experiment. A quality comparison requires separate model artifacts and labeled evaluation data.
+
+### 8.7 Runtime dependency and data-service choices
+- **Context**: The single Python requirements file included training/export packages in the serving image, Redis ran without persistence and could evict keys, and monitoring configuration targeted host ports rather than Compose service names.
+- **Decision**: Add a pinned serving-only requirements file; keep training dependencies in the existing ML requirements. Enable Redis AOF persistence with `noeviction`; use named volumes for Redis, ClickHouse, Caddy, Prometheus, and Grafana; scrape API and worker by their Compose DNS names.
+- **Rationale**: Keep serving images smaller, retain queued/settings data through restarts, avoid silently evicting stream keys, and make telemetry work inside the Compose network. `noeviction` means writes can fail at the configured memory ceiling, so capacity monitoring remains necessary.
+- **Build detail**: Docker ignore files exclude the local virtual environment, Node modules, model binaries, and generated artifacts from build contexts. Model files are mounted separately at runtime.
+
+### 8.8 Deployment documentation and model artifacts
+- **Context**: Model binaries are ignored by Git and the previous README's “initialize model” command did not create them.
+- **Decision**: Document the ONNX export command, expected mounted files, complete Compose startup, local URL, observability profile, and production domain/DNS steps. Keep the model binaries out of Git.
+- **Rationale**: Large generated binaries should not inflate repository history. A reproducible export plus an explicit artifact requirement makes the deployment prerequisite clear; a hosted artifact registry can be added when the project selects one.
 

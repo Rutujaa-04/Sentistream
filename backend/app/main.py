@@ -17,12 +17,13 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app.config import settings
+from app.config import dashboard_controls_enabled, settings, test_endpoints_enabled
 from app.database import ClickHouseDatabase
 from app.model import SentimentModel
 from app.trading.portfolio_service import PortfolioService
@@ -87,6 +88,7 @@ price_feed = PriceFeed()
 portfolio_service = PortfolioService(db, price_feed)
 redis_client: Optional[aioredis.Redis] = None
 pubsub_task: Optional[asyncio.Task] = None
+model_ready = False
 
 async def redis_pubsub_listener():
     """Background listener task that consumes from Redis Pub/Sub and broadcasts to WebSockets."""
@@ -117,7 +119,7 @@ async def redis_pubsub_listener():
 
 # FastAPI Lifespan Context Manager
 async def lifespan(app: FastAPI):
-    global redis_client, pubsub_task
+    global redis_client, pubsub_task, model_ready
     logger.info("Bootstrapping SentiStream API Gateway...")
     
     # 1. Initialize and Warm ClickHouse & PriceFeed Connections
@@ -137,8 +139,10 @@ async def lifespan(app: FastAPI):
     # 3. Instantiate and Pre-load ONNX Model (Prevents first-request cold-start latency)
     try:
         _ = SentimentModel()
+        model_ready = True
         logger.info("Sentiment ONNX Model pre-loaded successfully.")
     except Exception as e:
+        model_ready = False
         logger.critical("Model load failed during startup", error=str(e))
         
     # 4. Start Redis Pub/Sub Listener Task
@@ -169,7 +173,7 @@ app = FastAPI(
 # Enable CORS restricted to Vite Dev Server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -233,13 +237,17 @@ async def ping():
         await redis_client.ping()
         latency = (time.perf_counter() - t0) * 1000.0
         
-        return {
-            "status": "ok",
+        status = "ok" if model_ready else "degraded"
+        payload = {
+            "status": status,
             "clickhouse": "warm",
             "redis": "warm",
-            "onnx_model": "loaded",
+            "onnx_model": "loaded" if model_ready else "unavailable",
             "latency_ms": round(latency, 2)
         }
+        if not model_ready:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
     except Exception as e:
         logger.error("Warmup ping check degraded", error=str(e))
         raise HTTPException(
@@ -259,8 +267,9 @@ async def health():
         stream_len = await redis_client.xlen("raw_headlines")
         dlq_len = await redis_client.xlen("dlq_headlines")
         
-        return {
-            "status": "healthy",
+        status = "healthy" if model_ready else "degraded"
+        payload = {
+            "status": status,
             "components": {
                 "redis": {
                     "status": "ok",
@@ -272,11 +281,14 @@ async def health():
                     "rows_7d": ch_rows
                 },
                 "onnx": {
-                    "status": "ok",
-                    "model": "finbert-int8"
+                    "status": "ok" if model_ready else "unavailable",
+                    "model": "finbert-int8" if model_ready else None
                 }
             }
         }
+        if not model_ready:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
     except Exception as e:
         logger.error("System health check failed", error=str(e))
         raise HTTPException(
@@ -288,9 +300,8 @@ async def health():
 # TEST-ONLY ENDPOINTS (No Auth Guard)
 # ==========================================
 
-# SECURITY NOTICE: This route has no authentication guard as it is test-only infrastructure 
-# designed strictly for local E2E automated tests (Playwright) to inject mock headlines. 
-# In a production deployment, this entire endpoint must be disabled, removed, or fully authenticated.
+# This route is disabled by default, intended only for local E2E tests, and
+# unavailable whenever APP_ENV is production.
 @app.post("/api/v1/test/inject")
 async def inject_test_headline(payload: dict):
     """
@@ -300,6 +311,9 @@ async def inject_test_headline(payload: dict):
     for E2E testing (Playwright) in development and test environments. Do not 
     expose this route in production.
     """
+    if not test_endpoints_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+
     import uuid
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis client not initialized")
@@ -321,7 +335,7 @@ async def inject_test_headline(payload: dict):
 
 @app.get("/api/v1/headlines")
 async def get_recent_headlines(
-    ticker: Optional[str] = Query(default=None),
+    ticker: Optional[str] = Query(default=None, pattern="^[A-Za-z][A-Za-z0-9.-]{0,11}$"),
     limit: int = Query(default=20, ge=1, le=100)
 ):
     """Retrieves recent sentiment-analyzed headlines from ClickHouse."""
@@ -376,7 +390,7 @@ async def get_latency_percentiles(window: str = Query(default="1h", pattern="^(1
 
 @app.get("/api/v1/sentiment-trends")
 async def get_sentiment_trends(
-    ticker: Optional[str] = Query(default=None),
+    ticker: Optional[str] = Query(default=None, pattern="^[A-Za-z][A-Za-z0-9.-]{0,11}$"),
     hours: int = Query(default=6, ge=1, le=24)
 ):
     """Retrieves rolling sentiment buckets aggregated by minute."""
@@ -393,7 +407,7 @@ async def get_sentiment_trends(
 
 @app.get("/api/v1/drift-alerts")
 async def get_drift_alerts(
-    ticker: Optional[str] = Query(default=None),
+    ticker: Optional[str] = Query(default=None, pattern="^[A-Za-z][A-Za-z0-9.-]{0,11}$"),
     limit: int = Query(default=50, ge=1, le=200)
 ):
     """Retrieves sparse statistical drift alerts from storage."""
@@ -433,6 +447,8 @@ async def get_portfolio_history():
 @app.post("/api/v1/portfolio/reset")
 async def reset_portfolio():
     """Resets the paper trading portfolio by clearing trade history and broadcasting reset."""
+    if not dashboard_controls_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
     try:
         await db.clear_paper_trades()
         if redis_client:
@@ -454,7 +470,10 @@ async def get_settings():
         mode = await redis_client.get("sentistream:settings:strategy_mode")
         if not mode:
             mode = "long_only"
-        return {"strategy_mode": mode}
+        return {
+            "strategy_mode": mode,
+            "controls_enabled": dashboard_controls_enabled()
+        }
     except Exception as e:
         logger.error("Failed to read settings from Redis", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to read strategy settings")
@@ -464,6 +483,8 @@ async def update_settings(payload: SettingsPayload):
     """Updates the active trading strategy settings in Redis."""
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis client not initialized")
+    if not dashboard_controls_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
     if payload.strategy_mode not in ("long_only", "long_short"):
         raise HTTPException(status_code=400, detail="Invalid strategy_mode. Must be 'long_only' or 'long_short'")
     try:

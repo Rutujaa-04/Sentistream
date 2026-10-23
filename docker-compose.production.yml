@@ -1,0 +1,14 @@
+services:
+  api:
+    environment:
+      APP_ENV: production
+      ENABLE_TEST_ENDPOINTS: "false"
+      ENABLE_DASHBOARD_CONTROLS: "false"
+
+  worker:
+    environment:
+      APP_ENV: production
+
+  ingestor:
+    environment:
+      APP_ENV: production

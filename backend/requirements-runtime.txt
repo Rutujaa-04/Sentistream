@@ -1,0 +1,14 @@
+# Minimal dependencies needed by the API, consumer, and news ingestor.
+# Training, export, and evaluation dependencies remain in requirements.txt.
+aiohttp==3.13.3
+clickhouse-driver==0.2.10
+fastapi==0.136.3
+feedparser==6.0.12
+numpy==2.4.6
+onnxruntime==1.26.0
+prometheus-client==0.25.0
+pydantic==2.13.4
+redis==8.0.0
+structlog==25.5.0
+transformers==4.57.6
+uvicorn[standard]==0.48.0
