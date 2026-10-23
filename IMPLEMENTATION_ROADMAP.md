@@ -5,7 +5,7 @@ Track implementation work here. Check an item only after its code and documentat
 ## Completed
 
 - [x] Prepare the hosted-demo foundation: full-stack Compose deployment, same-origin frontend routing, production write protections, health reporting, runtime image split, and deployment documentation. Commit: `89fbd38`.
-- [x] Repair the production dependency security gate: remove Transformers from the serving image, load the exported tokenizer artifact directly, and scan the exact runtime requirements in CI.
+- [ ] Repair the production dependency security gate: remove Transformers from the serving image, load the exported tokenizer artifact directly, upgrade vulnerable runtime dependencies, and confirm a clean CI audit.
 
 ## Next implementations
 
