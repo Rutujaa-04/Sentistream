@@ -64,7 +64,7 @@ SETTINGS index_granularity = 8192;
 -- 5. Table: portfolio_snapshots
 -- Periodic point-in-time account marks. These are snapshots, not tick-level prices.
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-    snapshot_at DateTime64(3, 'UTC'),
+    snapshot_at DateTime('UTC'),
     portfolio_value_usd Float64,
     cash_usd Float64,
     realized_pnl_usd Float64,
