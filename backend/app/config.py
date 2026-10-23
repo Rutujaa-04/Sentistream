@@ -33,6 +33,9 @@ class Settings(BaseModel):
 
     # Ingestion Parameters
     POLL_INTERVAL: int = Field(default=60)
+    STREAM_MAX_RETRIES: int = Field(default=3, ge=1)
+    STREAM_RECLAIM_IDLE_MS: int = Field(default=60000, ge=1000)
+    STREAM_RECLAIM_INTERVAL_SECONDS: int = Field(default=5, ge=1)
     LOG_LEVEL: str = Field(default="INFO")
 
     # Paper Trading Strategy Selection

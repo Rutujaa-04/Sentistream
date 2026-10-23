@@ -11,12 +11,14 @@ import structlog
 from app.metrics import (
     DLQ_BACKLOG,
     DRIFT_ALERTS,
+    HEADLINE_RETRIES,
     HEADLINES_PROCESSED,
     INFERENCE_LATENCY,
     PORTFOLIO_CASH,
     PORTFOLIO_TOTAL_VALUE,
     POSITION_SHARES,
     REDIS_STREAM_BACKLOG,
+    REDIS_STREAM_OLDEST_PENDING_SECONDS,
     ROLLING_Z_SCORE,
     TOKENIZATION_LATENCY,
     TRADES_EXECUTED,
@@ -65,6 +67,8 @@ class ConsumerWorker:
         self.drift_detectors: Dict[str, DriftDetector] = {}
         # Tracks the last time a headline was processed for a ticker to detect quiet tickers
         self.last_headline_time: Dict[str, float] = {}
+        self.pending_scan_cursor = "0-0"
+        self.last_reclaim_time = 0.0
         self.backlog_task: Optional[asyncio.Task] = None
         self.settings_listener_task: Optional[asyncio.Task] = None
         self.is_running = True
@@ -231,7 +235,13 @@ class ConsumerWorker:
                 logger.error("Failed to initialize consumer group", error=str(e))
                 raise e
 
-    async def route_to_dlq(self, raw_message_id: str, payload: dict, error_msg: str):
+    async def route_to_dlq(
+        self,
+        raw_message_id: str,
+        payload: dict,
+        error_msg: str,
+        retry_attempts: int = 0,
+    ):
         """Routes failed or corrupted stream messages to the Dead Letter Queue (DLQ) stream."""
         logger.error(
             "Routing corrupted message to DLQ", 
@@ -246,19 +256,70 @@ class ConsumerWorker:
             "headline_text": payload.get("headline_text", "UNKNOWN"),
             "source": payload.get("source", "UNKNOWN"),
             "failed_at": str(time.time()),
+            "retry_attempts": str(retry_attempts),
             "error_message": error_msg
         }
         
-        # Write to DLQ stream, bounded to 500 items max
-        await self.redis_client.xadd(
-            name="dlq_headlines",
-            fields=dlq_payload,
-            maxlen=500,
-            approximate=True
+        # Keep DLQ persistence, source acknowledgement, and retry cleanup atomic.
+        async with self.redis_client.pipeline(transaction=True) as pipeline:
+            pipeline.xadd(
+                "dlq_headlines",
+                fields=dlq_payload,
+                maxlen=500,
+                approximate=True,
+            )
+            pipeline.xack("raw_headlines", "sentistream_workers", raw_message_id)
+            pipeline.hdel("sentistream:stream:retry-counts", raw_message_id)
+            await pipeline.execute()
+
+    async def handle_processing_failure(self, message_id: str, fields: dict, error_msg: str):
+        """Retry unexpected failures by leaving them pending, then DLQ at the limit."""
+        retry_attempts = await self.redis_client.hincrby(
+            "sentistream:stream:retry-counts", message_id, 1
         )
-        
-        # Acknowledge the original stream so it doesn't block the consumer group
-        await self.redis_client.xack("raw_headlines", "sentistream_workers", raw_message_id)
+        if retry_attempts >= settings.STREAM_MAX_RETRIES:
+            await self.route_to_dlq(
+                message_id,
+                fields,
+                error_msg,
+                retry_attempts=retry_attempts,
+            )
+            return
+
+        HEADLINE_RETRIES.inc()
+        logger.warning(
+            "Headline processing failed; leaving it pending for retry",
+            message_id=message_id,
+            retry_attempt=retry_attempts,
+            max_retries=settings.STREAM_MAX_RETRIES,
+            error=error_msg,
+        )
+
+    async def reclaim_pending_messages(self):
+        """Claim messages abandoned by crashed consumers after the idle threshold."""
+        response = await self.redis_client.xautoclaim(
+            name="raw_headlines",
+            groupname="sentistream_workers",
+            consumername=self.worker_name,
+            min_idle_time=settings.STREAM_RECLAIM_IDLE_MS,
+            start_id=self.pending_scan_cursor,
+            count=10,
+        )
+        self.pending_scan_cursor = response[0]
+        messages = response[1]
+        deleted_ids = response[2] if len(response) > 2 else []
+
+        if deleted_ids:
+            await self.redis_client.hdel(
+                "sentistream:stream:retry-counts", *deleted_ids
+            )
+        for message_id, fields in messages:
+            logger.info(
+                "Reclaimed abandoned headline from Redis pending list",
+                message_id=message_id,
+                consumer=self.worker_name,
+            )
+            await self.process_message(message_id, fields)
 
     def get_drift_detector(self, ticker: str) -> DriftDetector:
         """Lazy-instantiates a ticker-isolated Z-score drift detector."""
@@ -631,7 +692,10 @@ class ConsumerWorker:
                 await self.redis_client.publish("sentistream:sentiment_events", json.dumps(alert_payload))
 
             # 6. Acknowledge message as processed
-            await self.redis_client.xack("raw_headlines", "sentistream_workers", message_id)
+            async with self.redis_client.pipeline(transaction=True) as pipeline:
+                pipeline.xack("raw_headlines", "sentistream_workers", message_id)
+                pipeline.hdel("sentistream:stream:retry-counts", message_id)
+                await pipeline.execute()
             logger.info("Successfully processed message", message_id=message_id, ticker=ticker, sentiment=inference["label"])
 
         except KeyError as e:
@@ -641,17 +705,31 @@ class ConsumerWorker:
         except Exception as e:
             ticker_label = fields.get("ticker", "UNKNOWN").strip().upper() if isinstance(fields, dict) else "UNKNOWN"
             HEADLINES_PROCESSED.labels(ticker=ticker_label, sentiment="unknown", status="error", model_version=model_version).inc()
-            await self.route_to_dlq(message_id, fields, f"Processing execution failed: {str(e)}")
+            await self.handle_processing_failure(
+                message_id, fields, f"Processing execution failed: {str(e)}"
+            )
 
     async def record_queue_backlogs(self):
         """Periodically records queue lengths for raw stream and DLQ into Prometheus gauges."""
         while self.is_running:
             try:
                 if self.redis_client:
-                    raw_len = await self.redis_client.xlen("raw_headlines")
+                    pending = await self.redis_client.xpending(
+                        "raw_headlines", "sentistream_workers"
+                    )
+                    raw_len = pending.get("pending", 0)
                     dlq_len = await self.redis_client.xlen("dlq_headlines")
                     REDIS_STREAM_BACKLOG.set(raw_len)
                     DLQ_BACKLOG.set(dlq_len)
+                    oldest_pending = await self.redis_client.xpending_range(
+                        "raw_headlines", "sentistream_workers", "-", "+", 1
+                    )
+                    oldest_idle_ms = (
+                        oldest_pending[0].get("time_since_delivered", 0)
+                        if oldest_pending
+                        else 0
+                    )
+                    REDIS_STREAM_OLDEST_PENDING_SECONDS.set(oldest_idle_ms / 1000.0)
 
                 # Reset Z-score gauge to 0.0 for quiet tickers to prevent stale values
                 now = time.time()
@@ -675,6 +753,11 @@ class ConsumerWorker:
         
         while self.is_running:
             try:
+                now = time.monotonic()
+                if now - self.last_reclaim_time >= settings.STREAM_RECLAIM_INTERVAL_SECONDS:
+                    await self.reclaim_pending_messages()
+                    self.last_reclaim_time = now
+
                 # Read from raw_headlines stream using consumer group
                 # ">" means read only newly arrived messages that have not been read by other consumers
                 # COUNT=10 processes up to 10 messages in a single batch

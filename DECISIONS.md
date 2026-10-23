@@ -123,3 +123,12 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Rationale**: This removes the vulnerable Transformers package from the always-on API/worker/ingestor image without breaking model training and export. It aligns the gate with the production attack surface instead of suppressing the reported advisories with broad ignores.
 - **Operational detail**: Model packaging must include `models/finbert-onnx/tokenizer.json` (or a fine-tuned checkpoint containing `tokenizer.json`) alongside the ONNX model. Missing local tokenizer assets now fail startup with an actionable error instead of downloading an implicit public model.
 - **Limit**: This change does not claim the development/training toolchain is vulnerability-free. The ML dependency set needs a separate exporter migration and security review before it can be treated as a secured build environment.
+
+---
+
+## 10. Redis Stream Recovery and Retry Telemetry (2026-10-23)
+- **Context**: A worker crash leaves messages in the consumer group's pending-entry list, where the existing `>` read never sees them again. Processing exceptions were sent directly to the DLQ without retrying, and the backlog gauge measured total stream length rather than work still awaiting acknowledgement.
+- **Decision**: Reclaim abandoned entries with Redis `XAUTOCLAIM` after a configurable idle period; retry unexpected processing failures up to a configurable limit by leaving the message pending; send malformed messages immediately to the DLQ and exhausted messages there with their retry count. Store retry counts in a Redis hash keyed by stream ID, and atomically acknowledge plus clear retry metadata after success or DLQ routing.
+- **Rationale**: Redis Streams provides durable pending ownership and idle-age based recovery without introducing a separate broker. Keeping retry counts in Redis allows another worker to continue the retry budget after a process restart.
+- **Telemetry**: Report unacknowledged count, oldest pending idle age, scheduled retry count, and retained DLQ length. The age metric is pending idle time since last delivery, not total time since the headline was ingested.
+- **Trade-off**: Delivery is at least once. A failure after an external or database side effect can cause that headline to be processed again; idempotent trade execution and persistence remain necessary before scaling to multiple workers or live broker execution.

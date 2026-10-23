@@ -60,7 +60,17 @@ POSITION_SHARES = Gauge(
 # 4. Stream Queue Backlog Metrics
 REDIS_STREAM_BACKLOG = Gauge(
     "sentistream_redis_stream_backlog",
-    "Number of pending headlines in the raw_headlines stream queue"
+    "Number of unacknowledged headlines in the raw_headlines consumer group"
+)
+
+REDIS_STREAM_OLDEST_PENDING_SECONDS = Gauge(
+    "sentistream_redis_stream_oldest_pending_seconds",
+    "Idle age of the oldest unacknowledged raw headline"
+)
+
+HEADLINE_RETRIES = Counter(
+    "sentistream_headline_retries_total",
+    "Number of transient headline processing failures scheduled for retry"
 )
 
 DLQ_BACKLOG = Gauge(
