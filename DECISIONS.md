@@ -115,3 +115,20 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Decision**: Document the ONNX export command, expected mounted files, complete Compose startup, local URL, observability profile, and production domain/DNS steps. Keep the model binaries out of Git.
 - **Rationale**: Large generated binaries should not inflate repository history. A reproducible export plus an explicit artifact requirement makes the deployment prerequisite clear; a hosted artifact registry can be added when the project selects one.
 
+---
+
+## 9. Serving Dependency Security Boundary (2026-10-23)
+- **Context**: CI's security job first failed on unignored vulnerabilities in the ML/training dependency set (Transformers 4.57.6, Datasets 4.8.5, ONNX 1.21.0, and transitive packages). Once narrowed to the exact deployed runtime set, it found 56 advisories in `aiohttp==3.13.3`, all with fixes at or before 3.14.4. The ONNX export path currently pins `optimum-onnx==0.1.0`, whose release supports Transformers 4.56/4.57; moving that stack to Transformers 5 without an exporter migration is not a safe patch-level update.
+- **Decision**: The deployed runtime loads the local `tokenizer.json` artifact using the standalone `tokenizers` package, upgrades aiohttp to 3.14.5, and CI's deployment security gate audits `backend/requirements-runtime.txt`, the exact Python dependency set installed by `backend/Dockerfile`. Training and ONNX export dependencies remain in `backend/requirements.txt` and are not shipped to the public serving image.
+- **Rationale**: This removes the vulnerable Transformers package from the always-on API/worker/ingestor image without breaking model training and export. It aligns the gate with the production attack surface instead of suppressing the reported advisories with broad ignores.
+- **Operational detail**: Model packaging must include `models/finbert-onnx/tokenizer.json` (or a fine-tuned checkpoint containing `tokenizer.json`) alongside the ONNX model. Missing local tokenizer assets now fail startup with an actionable error instead of downloading an implicit public model.
+- **Limit**: This change does not claim the development/training toolchain is vulnerability-free. The ML dependency set needs a separate exporter migration and security review before it can be treated as a secured build environment.
+
+---
+
+## 10. Redis Stream Recovery and Retry Telemetry (2026-10-23)
+- **Context**: A worker crash leaves messages in the consumer group's pending-entry list, where the existing `>` read never sees them again. Processing exceptions were sent directly to the DLQ without retrying, and the backlog gauge measured total stream length rather than work still awaiting acknowledgement.
+- **Decision**: Reclaim abandoned entries with Redis `XAUTOCLAIM` after a configurable idle period; retry unexpected processing failures up to a configurable limit by leaving the message pending; send malformed messages immediately to the DLQ and exhausted messages there with their retry count. Store retry counts in a Redis hash keyed by stream ID, and clear retry metadata after acknowledging success or DLQ persistence.
+- **Rationale**: Redis Streams provides durable pending ownership and idle-age based recovery without introducing a separate broker. Keeping retry counts in Redis allows another worker to continue the retry budget after a process restart.
+- **Telemetry**: Report unacknowledged count, oldest pending idle age, scheduled retry count, and retained DLQ length. The age metric is pending idle time since last delivery, not total time since the headline was ingested.
+- **Trade-off**: Delivery is at least once. A failure after an external or database side effect can cause that headline to be processed again; idempotent trade execution and persistence remain necessary before scaling to multiple workers or live broker execution.
