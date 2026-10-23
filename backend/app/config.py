@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
+    # Deployment controls: write/test routes stay off unless explicitly enabled.
+    APP_ENV: str = Field(default="development")
+    ENABLE_TEST_ENDPOINTS: bool = Field(default=False)
+    ENABLE_DASHBOARD_CONTROLS: bool = Field(default=False)
+    ALLOWED_ORIGINS: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
+
     # API Keys
     FINNHUB_API_KEY: str = Field(default="")
     ALPACA_API_KEY: str = Field(default="")
@@ -37,14 +43,9 @@ class Settings(BaseModel):
 
     @classmethod
     def load(cls):
-        # Gather defaults from class fields
-        env_data = {}
-        for name, field in cls.model_fields.items():
-            val = os.environ.get(name)
-            if val is not None:
-                env_data[name] = val
-            else:
-                env_data[name] = field.default
+        # Defaults < .env < process environment. Deployment-provided secrets and
+        # service addresses must take precedence over a developer's local file.
+        env_data = {name: field.default for name, field in cls.model_fields.items()}
 
         # Attempt to read from .env file inside workspace
         env_path = ".env"
@@ -59,8 +60,22 @@ class Settings(BaseModel):
                         v = v.strip().strip('"').strip("'")
                         if k in cls.model_fields:
                             env_data[k] = v
+
+        for name in cls.model_fields:
+            if name in os.environ:
+                env_data[name] = os.environ[name]
         
         # Parse and validate with Pydantic
         return cls(**env_data)
 
 settings = Settings.load()
+
+
+def dashboard_controls_enabled() -> bool:
+    """Unauthenticated dashboard writes are limited to explicit non-production use."""
+    return settings.APP_ENV.strip().lower() != "production" and settings.ENABLE_DASHBOARD_CONTROLS
+
+
+def test_endpoints_enabled() -> bool:
+    """Test injection is never exposed by a production deployment."""
+    return settings.APP_ENV.strip().lower() != "production" and settings.ENABLE_TEST_ENDPOINTS

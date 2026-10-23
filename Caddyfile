@@ -1,0 +1,4 @@
+{$SENTISTREAM_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy frontend:80
+}

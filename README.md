@@ -2,26 +2,25 @@
 
 **SentiStream** is a real-time, event-driven MLOps sentiment analytics and quantitative paper trading pipeline for financial headlines. It demonstrates high-performance data engineering, machine learning service deployment, and real-time observability.
 
-The system processes financial news feeds through an event queue, routes them deterministically to dual ONNX FinBERT models, checks for statistical sentiment drift, and executes quantitative trading strategies (Long-Only or Long-Short/Short-Selling) on simulated or live Alpaca brokerage sandboxes.
+The system processes financial news feeds through an event queue, routes them deterministically across two ONNX FinBERT version slots, checks for statistical sentiment drift, and executes quantitative trading strategies (Long-Only or Long-Short/Short-Selling) using a simulator or Alpaca's paper-trading API.
 
 ---
 
 ## 💎 Core Features
 
 ### 1. Event-Driven Real-time Pipeline
-* **Async News Ingestor (`ingestor.py`)**: Polls Finnhub's financial news API with token-bucket rate limiting and falls back automatically to financial RSS feeds (Google News, Yahoo Finance) on API rate limits or failures. Implements SHA-256 deduplication to prevent duplicate processing.
+* **Async News Ingestor (`ingestor.py`)**: Polls Finnhub's financial news API and falls back to MarketWatch and Yahoo Finance RSS feeds on API failures. Uses a deterministic UUID derived from headline text and ticker for deduplication.
 * **Broker Queue (Redis Streams)**: Buffers raw ingest payloads in the `raw_headlines` stream to decouple ingestion from inference.
 * **Consumer Worker (`worker.py`)**: Consumes the stream, routes text to versioned INT8-quantized FinBERT ONNX models, updates Z-score drift stats, evaluates trading signals, executes simulated/Alpaca trades, and persists results.
 
-### 2. Dual ONNX Model Registry & A/B Testing
-* Concurrently runs **Champion (`v1`)** and **Challenger (`v2`)** INT8-quantized FinBERT models locally via CPU execution threads.
-* Implements a deterministic **80/20 A/B split** based on the headline UUID's hash modulo:
+### 2. ONNX Routing Telemetry
+* Routes headlines across version slots (`v1` and `v2`) using CPU ONNX Runtime.
+* Implements a deterministic **80/20 split** based on the headline UUID:
   `Model Version = v1 if int(headline_id[:8], 16) % 10 < 8 else v2`
-  This ensures stable model assignment across worker restarts and Dead Letter Queue (DLQ) replays.
-* Exposes detailed evaluation counts, average latencies, and p50, p95, and p99 percentile distributions grouped by model version.
+  This keeps slot assignment stable across worker restarts and DLQ replays. If versioned artifacts are absent, both slots are copied from the same base model; the current dashboard reports routing counts and latency, not model-quality A/B results.
 
 ### 3. Quantitative Trading Strategies
-* **Strategy Modes**: Supports **Long-Only** and **Long-Short (Short Selling)** strategy modes, toggled dynamically from the UI.
+* **Strategy Modes**: Supports **Long-Only** and **Long-Short (Short Selling)** modes. Dashboard write controls are disabled by default and remain disabled in production until authenticated controls exist.
 * **Long-Only Mode**:
   * **Confidently Positive** (sentiment score $\ge 0.75$): Buy an allocation equal to 5% of net portfolio value.
   * **Confidently Negative** (sentiment score $\ge 0.75$): Sell/liquidate the entire ticker position (no shorting).
@@ -29,12 +28,13 @@ The system processes financial news feeds through an event queue, routes them de
   * **Confidently Positive**: Cover any existing short position completely. If flat or long, add to/open a long position (5% allocation cost).
   * **Confidently Negative**: Liquidate any existing long position completely. If flat or short, open/scale into a short position (5% allocation proceeds added to cash, shares become negative).
 * **Cooldown limit**: Enforces a strict 60-second cooldown period per ticker.
-* **Simulated & Alpaca Engines**: Supports local **Simulated Engine** for offline development or live orders via **Alpaca Brokerage Sandbox**.
+* **Simulated & Alpaca Paper Engines**: Supports a local simulated engine or orders to the Alpaca paper-trading API.
 * **Capital-Depletion Validation**: Dispatches WebSocket notifications for out-of-cash errors.
 
-### 4. Pure Ledger Valuation & Replay
+### 4. Trade Ledger Reconstruction
 * Reconstructs the portfolio cash, position ledger, realized/unrealized P&L, and win-rate metrics directly from ClickHouse trade history using `PortfolioService`.
 * Handles short sale proceeds (added to cash at execution time) and short covering costs (subtracted from cash) without double-counting position liabilities.
+* The historical curve is reconstructed at trade timestamps using transaction prices; it is not a periodic historical market-to-market series.
 
 ### 5. MLOps Telemetry (Prometheus & Grafana)
 * Tracks tokenization/inference latency histograms, processed throughput count, rolling Z-score sentiment drift, portfolio cash/valuation, and stream backlogs.
@@ -43,7 +43,7 @@ The system processes financial news feeds through an event queue, routes them de
 
 ### 6. Premium Glassmorphic Web UI
 * Displays live ticker news streams with distinct, version-specific badges (`V1` / `V2`) indicating which model performed inference.
-* Features a responsive, side-by-side **Model A/B Performance** card comparing evaluations, average latencies, and percentiles.
+* Shows routing-slot counts and latency percentiles. It does not claim a model-quality comparison until distinct artifacts and labeled evaluations are available.
 * Formats negative position shares as `SHORT` (e.g., `10 SHORT`) with distinct amber accents (`var(--color-drift)`) to represent short liabilities.
 * Displays a header panel containing Net Portfolio Value, Cash Balance, Realized P&L, Unrealized P&L, and Win-Rate metrics using beautiful, custom telemetry cards and inline SVGs.
 
@@ -82,80 +82,41 @@ graph TD
 ## 🛠️ Local Installation & Setup
 
 ### Prerequisites
-* Python 3.11+
-* Node.js 20+
-* Docker & Docker Compose (for ClickHouse, Redis, Prometheus, and Grafana)
+* Docker Engine and Docker Compose v2
+* Python 3.11+ only if you need to export model assets locally
 
-### 1. Start Docker Services
+### 1. Configure the environment
 ```bash
-docker-compose up -d
+cp .env.example .env
 ```
-This boots:
-* **Redis** (Port `6379`)
-* **ClickHouse** (Port `9000` & HTTP `8123`)
-* **Prometheus** (Port `9090`)
-* **Grafana** (Port `3000`)
+Set `FINNHUB_API_KEY` if you want Finnhub ingestion and quotes. Keep `ENABLE_TEST_ENDPOINTS` and `ENABLE_DASHBOARD_CONTROLS` false for a public deployment. The default ClickHouse password is for local development; replace it before hosting.
 
-### 2. Configure Environment
-Create a `.env` file in the root directory:
-```env
-REDIS_URL=redis://localhost:6379
-CLICKHOUSE_HOST=localhost
-CLICKHOUSE_PORT=9000
-CLICKHOUSE_DATABASE=default
-CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=
-
-# Portfolio Setup
-INITIAL_PORTFOLIO_CAPITAL=100000.0
-TRADING_ENGINE=simulated # 'simulated' or 'alpaca'
-
-# (Optional) Alpaca credentials
-ALPACA_API_KEY=your_alpaca_key
-ALPACA_SECRET_KEY=your_alpaca_secret
-ALPACA_PAPER_BASE_URL=https://paper-api.alpaca.markets
-
-# (Optional) Finnhub News key
-FINNHUB_API_KEY=your_finnhub_key
-```
-
-### 3. Setup Virtual Environment & Dependencies
+### 2. Prepare model assets
+Model binaries are deliberately excluded from Git. From the project root, install the ML dependencies and export the ONNX model:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
+python backend/ml/export_onnx.py
 ```
+The runtime expects `models/finbert-int8.onnx` and the tokenizer files under `models/finbert-onnx/`. Startup makes `v1` and `v2` routing-slot copies from the base model when versioned files are absent; the slots are not a model-quality A/B experiment.
 
-### 4. Initialize Models
-Populate the model directory with ONNX assets:
+### 3. Start the complete stack
 ```bash
-python backend/app/model.py
+docker compose up --build -d
 ```
-*(If version files are missing, SentiStream automatically initializes `models/finbert-int8-v1.onnx` and `models/finbert-int8-v2.onnx` by copying the base quantized asset).*
-
-### 5. Launch Backend Daemons
-In separate terminal tabs (with virtualenv activated):
-
-* **API Gateway**:
-  ```bash
-  PYTHONPATH=backend ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-  ```
-* **Consumer Worker**:
-  ```bash
-  PYTHONPATH=backend ./venv/bin/python backend/app/worker.py
-  ```
-* **News Ingestor**:
-  ```bash
-  PYTHONPATH=backend ./venv/bin/python backend/app/ingestor.py
-  ```
-
-### 6. Start Frontend Development Server
+Open `https://localhost` (the local Caddy certificate may require a browser trust exception). The stack includes the API, inference worker, news ingestor, frontend, Redis, ClickHouse, and Caddy. Prometheus and Grafana are optional:
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose --profile observability up --build -d
 ```
-Open `http://localhost:5173` to view the live dashboard!
+The API is available to the host only at `127.0.0.1:8000` for local tools. Grafana is bound to `127.0.0.1:3000` and Prometheus to `127.0.0.1:9090`; they are not exposed to the public network. For local browser tests that inject headlines, set `ENABLE_TEST_ENDPOINTS=true` in `.env` while `APP_ENV=development`. Do not enable this in production.
+
+### Public deployment
+Use a Linux VM with Docker Compose for the first hosted demo. Copy the repository and model assets to the VM, configure `.env` with a real `SENTISTREAM_DOMAIN`, a strong ClickHouse password, and any external API keys, then run:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.production.yml up --build -d
+```
+Point the domain's DNS record at the VM and allow inbound TCP ports 80 and 443. Caddy terminates HTTPS; Redis, ClickHouse, API, Prometheus, and Grafana remain internal (the observability ports bind to loopback). The production override disables test injection and dashboard write controls. Back up the named ClickHouse and Redis volumes.
 
 ---
 

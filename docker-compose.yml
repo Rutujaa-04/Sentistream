@@ -1,72 +1,181 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7.2-alpine
-    container_name: sentistream-redis
-    ports:
-      - "6379:6379"
-    command: >
-      redis-server 
-      --save "" 
-      --appendonly no 
-      --maxmemory 200mb 
-      --maxmemory-policy allkeys-lru
-    networks:
-      - sentistream-network
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [sentistream]
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.3-alpine
-    container_name: sentistream-clickhouse
-    ports:
-      - "8123:8123"
-      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-sentistream}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    environment:
-      - CLICKHOUSE_DB=default
-      - CLICKHOUSE_USER=default
-      - CLICKHOUSE_PASSWORD=sentistream
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
-    networks:
-      - sentistream-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [sentistream]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-sentistream}
+      APP_ENV: ${APP_ENV:-development}
+      ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
+      ENABLE_DASHBOARD_CONTROLS: ${ENABLE_DASHBOARD_CONTROLS:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+    volumes:
+      - ./models:/app/models:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    expose: ["8000"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    networks: [sentistream]
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-sentistream}
+      APP_ENV: ${APP_ENV:-development}
+    volumes:
+      - ./models:/app/models:ro
+    expose: ["8001"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [sentistream]
+
+  ingestor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.ingestor"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [sentistream]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    expose: ["80"]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks: [sentistream]
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      SENTISTREAM_DOMAIN: ${SENTISTREAM_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [sentistream]
 
   prometheus:
     image: prom/prometheus:v2.51.0
-    container_name: sentistream-prometheus
+    profiles: [observability]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - sentistream-network
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on: [api, worker]
+    restart: unless-stopped
+    networks: [sentistream]
 
   grafana:
     image: grafana/grafana:10.4.1
-    container_name: sentistream-grafana
-    ports:
-      - "3000:3000"
+    profiles: [observability]
     environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      - GF_SECURITY_ALLOW_EMBEDDING=true
-      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=5s
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 5s
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-    networks:
-      - sentistream-network
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+    restart: unless-stopped
+    networks: [sentistream]
 
 volumes:
+  redis-data:
   clickhouse-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
 
 networks:
-  sentistream-network:
+  sentistream:
     driver: bridge
