@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS headlines (
     ticker String,
     headline_text String,
     source String,
+    source_id String DEFAULT '',
+    published_at Nullable(DateTime('UTC')),
     sentiment_label Enum8('positive' = 0, 'negative' = 1, 'neutral' = 2, 'undefined' = 3),
     confidence_score Float64,
     ingested_at DateTime,
@@ -87,3 +89,5 @@ ALTER TABLE portfolio_snapshots ADD COLUMN IF NOT EXISTS benchmark_source String
 -- Migration: Add model_version column to headlines & telemetry
 ALTER TABLE headlines ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
 ALTER TABLE inference_telemetry ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';
+ALTER TABLE headlines ADD COLUMN IF NOT EXISTS source_id String DEFAULT '';
+ALTER TABLE headlines ADD COLUMN IF NOT EXISTS published_at Nullable(DateTime('UTC'));

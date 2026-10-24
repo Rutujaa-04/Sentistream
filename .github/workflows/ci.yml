@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: models
-          key: model-cache-${{ runner.os }}-${{ hashFiles('backend/ml/export_onnx.py', 'backend/requirements.txt') }}
+          key: model-cache-${{ runner.os }}-${{ hashFiles('backend/ml/export_onnx.py', 'backend/ml/compare_models.py', 'backend/ml/phrasebank_data.py', 'backend/requirements.txt') }}
 
       - name: Cache Hugging Face cache
         id: cache-hf
@@ -83,6 +83,9 @@ jobs:
       - name: Compile and Export ONNX Model
         if: steps.cache-models.outputs.cache-hit != 'true'
         run: python backend/ml/export_onnx.py
+
+      - name: Compare versioned models on the labeled holdout
+        run: python backend/ml/compare_models.py
         
       - name: Run Pytest Suite with Coverage
         env:

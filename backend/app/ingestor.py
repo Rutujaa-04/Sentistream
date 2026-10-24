@@ -1,9 +1,13 @@
 import asyncio
+import calendar
 import os
+import re
 import sys
 import time
+import unicodedata
 import uuid
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 import feedparser
@@ -32,17 +36,35 @@ RSS_FEEDS = [
 ]
 
 class IngestedHeadline(BaseModel):
-    id: str  # SHA-256 hash of headline_text + ticker
+    id: str  # Stable UUID derived from normalized headline text + ticker
     ticker: str
     headline_text: str
     source: str
+    source_id: str
+    published_at: Optional[float] = None
     ingested_at: float  # Unix timestamp
 
+def normalize_headline(text: str) -> str:
+    """Canonicalizes headline formatting so exact syndicated copies share a key."""
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    normalized = re.sub(r"[^\w\s]", " ", normalized, flags=re.UNICODE)
+    return " ".join(normalized.split())
+
 def compute_hash(text: str, ticker: str) -> str:
-    """Computes a unique, deterministic version 5 UUID for database and deduplication."""
+    """Computes a source-independent key for exact normalized syndicated copies."""
     namespace = uuid.NAMESPACE_DNS
-    name = f"{text.strip().lower()}:{ticker.strip().upper()}"
+    name = f"{normalize_headline(text)}:{ticker.strip().upper()}"
     return str(uuid.uuid5(namespace, name))
+
+def _source_id(value: str) -> str:
+    """Returns a stable, low-cardinality feed identifier for grouping metrics."""
+    parsed = urlparse(value)
+    host = parsed.hostname or value
+    return host.lower().removeprefix("www.")
+
+def _published_timestamp(entry: Any) -> Optional[float]:
+    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    return float(calendar.timegm(parsed)) if parsed else None
 
 class NewsIngestor:
     def __init__(self):
@@ -65,10 +87,11 @@ class NewsIngestor:
             await self.redis_client.close()
 
     async def check_seen(self, headline_hash: str) -> bool:
-        """Atomic seen check via Redis SETNX with a 24-hour expiration."""
+        """Atomically deduplicates normalized headlines for the configured window."""
         key = f"sentistream:seen:{headline_hash}"
-        # Set if not exists, expire in 24 hours (86400 seconds)
-        is_new = await self.redis_client.set(key, "1", ex=86400, nx=True)
+        is_new = await self.redis_client.set(
+            key, "1", ex=settings.NEWS_DEDUP_TTL_SECONDS, nx=True
+        )
         return not is_new  # If set succeeded, it is NOT seen (False), otherwise it IS seen (True)
 
     async def fetch_finnhub_news(self) -> List[Dict[str, Any]]:
@@ -106,6 +129,8 @@ class NewsIngestor:
                 loop = asyncio.get_event_loop()
                 feed = await loop.run_in_executor(None, feedparser.parse, feed_url)
                 
+                feed_id = _source_id(feed_url)
+                feed_name = getattr(feed.feed, "title", "") or feed_id
                 for entry in feed.entries[:20]:  # Limit to top 20 items per feed
                     # Normalize RSS fields to Finnhub equivalent schema
                     headline_text = entry.title if hasattr(entry, "title") else ""
@@ -116,9 +141,10 @@ class NewsIngestor:
                         
                     headlines.append({
                         "headline": headline_text,
-                        "datetime": time.time(),
+                        "published_at": _published_timestamp(entry),
                         "related": ticker,
-                        "source": "rss_fallback"
+                        "source": feed_name,
+                        "source_id": feed_id,
                     })
             except Exception as e:
                 logger.error("Error parsing RSS feed", url=feed_url, error=str(e))
@@ -132,6 +158,8 @@ class NewsIngestor:
             "ticker": headline.ticker,
             "headline_text": headline.headline_text,
             "source": headline.source,
+            "source_id": headline.source_id,
+            "published_at": "" if headline.published_at is None else str(headline.published_at),
             "ingested_at": str(headline.ingested_at)
         }
         
@@ -182,6 +210,11 @@ class NewsIngestor:
                     # Deduplication check
                     is_seen = await self.check_seen(headline_hash)
                     if is_seen:
+                        logger.debug(
+                            "Skipped duplicate or syndicated headline",
+                            ticker=ticker,
+                            source_id=item.get("source_id", "finnhub:general"),
+                        )
                         continue
                         
                     # Create and validate schema
@@ -190,7 +223,15 @@ class NewsIngestor:
                         ticker=ticker,
                         headline_text=headline_text,
                         source=item.get("source", "finnhub"),
-                        ingested_at=float(item.get("datetime", time.time()))
+                        source_id=item.get("source_id", "finnhub:general"),
+                        published_at=(
+                            float(item["published_at"])
+                            if item.get("published_at") is not None
+                            else float(item["datetime"])
+                            if item.get("datetime") is not None
+                            else None
+                        ),
+                        ingested_at=time.time(),
                     )
                     
                     # Publish to Redis Stream

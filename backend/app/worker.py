@@ -256,6 +256,8 @@ class ConsumerWorker:
             "ticker": payload.get("ticker", "UNKNOWN"),
             "headline_text": payload.get("headline_text", "UNKNOWN"),
             "source": payload.get("source", "UNKNOWN"),
+            "source_id": payload.get("source_id", "unknown"),
+            "published_at": payload.get("published_at", ""),
             "failed_at": str(time.time()),
             "retry_attempts": str(retry_attempts),
             "error_message": error_msg
@@ -343,12 +345,17 @@ class ConsumerWorker:
                 raise ValueError("Ticker symbol cannot be empty")
             headline_text = fields["headline_text"]
             source = fields["source"]
+            source_id = fields.get("source_id", "unknown") or "unknown"
+            published_at_raw = fields.get("published_at", "")
+            published_at = float(published_at_raw) if published_at_raw else None
             ingested_at = float(fields["ingested_at"])
             
-            # Deterministic 80/20 A/B split based on headline ID hash
+            # Route traffic only after distinct artifacts pass holdout gates
+            # and an operator explicitly enables the experiment.
             try:
-                clean_hex = headline_id[:8].replace("-", "")
-                model_version = "v1" if int(clean_hex, 16) % 10 < 8 else "v2"
+                if self.model.experiment_enabled:
+                    clean_hex = headline_id[:8].replace("-", "")
+                    model_version = "v1" if int(clean_hex, 16) % 10 < 8 else "v2"
             except Exception:
                 model_version = "v1"
             
@@ -393,7 +400,9 @@ class ConsumerWorker:
                 confidence_score=inference["confidence"],
                 ingested_at=ingested_at,
                 processed_at=processed_at,
-                model_version=model_version
+                model_version=model_version,
+                source_id=source_id,
+                published_at=published_at,
             )
             
             # B. Write Telemetry Metrics
@@ -671,6 +680,13 @@ class ConsumerWorker:
                     "confidence": inference["confidence"],
                     "latency_ms": round(inference["latency_ms"], 2),
                     "source": source,
+                    "source_id": source_id,
+                    "published_at": (
+                        time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(published_at))
+                        if published_at is not None
+                        else None
+                    ),
+                    "ingested_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(ingested_at)),
                     "processed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(processed_at)),
                     "model_version": model_version
                 }

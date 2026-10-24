@@ -350,6 +350,8 @@ export default function App() {
   const [sentimentTrends, setSentimentTrends] = useState([]);
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
+  const [modelEvaluation, setModelEvaluation] = useState({ status: 'not_evaluated', models: {} });
+  const [newsQuality, setNewsQuality] = useState({ headline_count: 0, publication_timestamp_coverage_pct: 0, data: [] });
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [portfolioAnalytics, setPortfolioAnalytics] = useState({
     observations: 0,
@@ -438,6 +440,11 @@ export default function App() {
         setTotalHeadlinesCount(headlinesData.total_count || headlinesData.data.length);
       }
 
+      const newsQualityRes = await fetch(`${API_BASE_URL}/api/v1/news-quality?hours=24`);
+      if (newsQualityRes.ok) {
+        setNewsQuality(await newsQualityRes.json());
+      }
+
       // Latency Percentiles (1 hour window)
       const latRes = await fetch(`${API_BASE_URL}/api/v1/latency-percentiles?window=1h`);
       if (latRes.ok) {
@@ -471,6 +478,11 @@ export default function App() {
       if (abRes.ok) {
         const abData = await abRes.json();
         setAbStats(abData.data || []);
+      }
+
+      const modelEvalRes = await fetch(`${API_BASE_URL}/api/v1/model-evaluation`);
+      if (modelEvalRes.ok) {
+        setModelEvaluation(await modelEvalRes.json());
       }
 
       // Persisted mark-to-market snapshots and sampled drawdown
@@ -928,6 +940,21 @@ export default function App() {
               <span className="status-indicator online" style={{ width: '6px', height: '6px', marginTop: '6px' }} />
             </h2>
 
+            <div style={{ maxHeight: '140px', overflowY: 'auto', padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                24H DATA QUALITY · {newsQuality.headline_count} HEADLINES · {newsQuality.publication_timestamp_coverage_pct}% HAVE PUBLICATION TIME
+              </div>
+              {(newsQuality.data || [])
+                .filter(row => selectedTicker === 'ALL' || row.ticker === selectedTicker)
+                .map(row => (
+                  <div key={`${row.ticker}-${row.feed_id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', paddingTop: '5px', color: 'var(--text-muted)' }}>
+                    <span>{row.ticker} · {row.feed_id} · {row.headline_count} items · {row.publication_timestamp_coverage_pct}% dated</span>
+                    <span>PUB {row.publication_age_seconds == null ? 'N/A' : row.publication_age_seconds < 3600 ? `${Math.floor(row.publication_age_seconds / 60)}m` : `${Math.floor(row.publication_age_seconds / 3600)}h`} · SEEN {row.ingestion_age_seconds == null ? 'N/A' : `${Math.floor(row.ingestion_age_seconds / 60)}m`}</span>
+                  </div>
+                ))}
+              {(newsQuality.data || []).length === 0 && <span style={{ color: 'var(--text-muted)' }}>No ingested news in this window.</span>}
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', paddingRight: '4px' }}>
               {headlines.length === 0 ? (
                 <div style={{ height: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--text-muted)' }}>
@@ -957,6 +984,10 @@ export default function App() {
                     <p style={{ fontSize: '13px', lineHeight: '1.4', color: '#FFF', fontWeight: '500', margin: 0 }}>
                       {item.headline}
                     </p>
+
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                      SOURCE: {item.source || 'UNKNOWN'} · FEED: {item.source_id || 'UNKNOWN'} · PUBLISHED: {item.published_at ? new Date(item.published_at).toLocaleString() : 'TIME UNAVAILABLE'}
+                    </div>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontFamily: 'var(--font-mono)', paddingTop: '4px' }}>
                       <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)' }}>
@@ -1318,7 +1349,9 @@ export default function App() {
             <LatencyChart data={latencyHistory} />
             
             <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              Routing-slot counts and latency only; model quality comparison is not available.
+              {modelEvaluation.status === 'ready' || modelEvaluation.status === 'rejected'
+                ? `HOLDOUT: ${modelEvaluation.dataset?.repo || 'Financial PhraseBank'} · ${modelEvaluation.sample_count} samples · ${modelEvaluation.status.toUpperCase()} · ${modelEvaluation.experiment_enabled ? 'EXPERIMENT ENABLED' : 'ROUTING V1 ONLY'}`
+                : `MODEL QUALITY: ${modelEvaluation.status.replaceAll('_', ' ').toUpperCase()} · ROUTING V1 ONLY`}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '8px' }}>
               {['v1', 'v2'].map(version => {
@@ -1330,6 +1363,8 @@ export default function App() {
                   p95_ms: 0,
                   p99_ms: 0
                 };
+                const hasCurrentEvaluation = ['ready', 'rejected'].includes(modelEvaluation.status);
+                const evalMetrics = hasCurrentEvaluation ? modelEvaluation.models?.[version] : null;
                 const isV2 = version === 'v2';
                 const accentColor = isV2 ? 'var(--color-drift)' : 'var(--color-neutral)';
                 const borderCol = isV2 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)';
@@ -1342,7 +1377,7 @@ export default function App() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>EVALS:</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>ROUTED EVENTS:</span>
                         <span style={{ color: '#FFF', fontWeight: 'bold' }}>{stats.total_count}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1352,6 +1387,18 @@ export default function App() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>p99:</span>
                         <span style={{ color: 'var(--color-bearish)' }}>{stats.p99_ms}ms</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>HOLDOUT ACCURACY:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? `${(evalMetrics.accuracy * 100).toFixed(1)}%` : '—'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>MACRO F1:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? evalMetrics.macro_f1.toFixed(3) : '—'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>ECE:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? evalMetrics.expected_calibration_error.toFixed(3) : '—'}</span>
                       </div>
                     </div>
                   </div>

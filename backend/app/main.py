@@ -25,7 +25,7 @@ from pydantic import BaseModel
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import dashboard_controls_enabled, settings, test_endpoints_enabled
 from app.database import ClickHouseDatabase
-from app.model import SentimentModel
+from app.model import SentimentModel, get_model_evaluation_status
 from app.trading.portfolio_service import PortfolioService
 from app.trading.price_feed import PriceFeed
 
@@ -356,6 +356,15 @@ async def get_recent_headlines(
         logger.error("Failed to query recent headlines", error=str(e))
         raise HTTPException(status_code=500, detail="ClickHouse query failed.")
 
+@app.get("/api/v1/news-quality")
+async def get_news_quality(hours: int = Query(default=24, ge=1, le=168)):
+    """Returns publication timestamp coverage and feed freshness by ticker."""
+    try:
+        return await db.query_news_quality(hours=hours)
+    except Exception as e:
+        logger.error("Failed to query news quality summary", error=str(e))
+        raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+
 @app.get("/api/v1/ab-stats")
 async def get_ab_stats():
     """Queries ClickHouse for aggregate latency and counts grouped by model version."""
@@ -368,6 +377,11 @@ async def get_ab_stats():
     except Exception as e:
         logger.error("Failed to query A/B stats", error=str(e))
         raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+
+@app.get("/api/v1/model-evaluation")
+async def get_model_evaluation():
+    """Returns holdout metrics only when they match mounted model artifacts."""
+    return get_model_evaluation_status()
 
 @app.get("/api/v1/latency-percentiles")
 async def get_latency_percentiles(window: str = Query(default="1h", pattern="^(1h|6h|24h)$")):
