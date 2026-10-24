@@ -351,6 +351,7 @@ export default function App() {
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
   const [modelEvaluation, setModelEvaluation] = useState({ status: 'not_evaluated', models: {} });
+  const [newsQuality, setNewsQuality] = useState({ headline_count: 0, publication_timestamp_coverage_pct: 0, data: [] });
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [portfolioAnalytics, setPortfolioAnalytics] = useState({
     observations: 0,
@@ -437,6 +438,11 @@ export default function App() {
         const headlinesData = await headlinesRes.json();
         setHeadlines(headlinesData.data);
         setTotalHeadlinesCount(headlinesData.total_count || headlinesData.data.length);
+      }
+
+      const newsQualityRes = await fetch(`${API_BASE_URL}/api/v1/news-quality?hours=24`);
+      if (newsQualityRes.ok) {
+        setNewsQuality(await newsQualityRes.json());
       }
 
       // Latency Percentiles (1 hour window)
@@ -934,6 +940,21 @@ export default function App() {
               <span className="status-indicator online" style={{ width: '6px', height: '6px', marginTop: '6px' }} />
             </h2>
 
+            <div style={{ maxHeight: '140px', overflowY: 'auto', padding: '10px 12px', border: '1px solid var(--border-light)', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                24H DATA QUALITY · {newsQuality.headline_count} HEADLINES · {newsQuality.publication_timestamp_coverage_pct}% HAVE PUBLICATION TIME
+              </div>
+              {(newsQuality.data || [])
+                .filter(row => selectedTicker === 'ALL' || row.ticker === selectedTicker)
+                .map(row => (
+                  <div key={`${row.ticker}-${row.feed_id}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', paddingTop: '5px', color: 'var(--text-muted)' }}>
+                    <span>{row.ticker} · {row.feed_id} · {row.headline_count} items · {row.publication_timestamp_coverage_pct}% dated</span>
+                    <span>PUB {row.publication_age_seconds == null ? 'N/A' : row.publication_age_seconds < 3600 ? `${Math.floor(row.publication_age_seconds / 60)}m` : `${Math.floor(row.publication_age_seconds / 3600)}h`} · SEEN {row.ingestion_age_seconds == null ? 'N/A' : `${Math.floor(row.ingestion_age_seconds / 60)}m`}</span>
+                  </div>
+                ))}
+              {(newsQuality.data || []).length === 0 && <span style={{ color: 'var(--text-muted)' }}>No ingested news in this window.</span>}
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', paddingRight: '4px' }}>
               {headlines.length === 0 ? (
                 <div style={{ height: '300px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: 'var(--text-muted)' }}>
@@ -963,6 +984,10 @@ export default function App() {
                     <p style={{ fontSize: '13px', lineHeight: '1.4', color: '#FFF', fontWeight: '500', margin: 0 }}>
                       {item.headline}
                     </p>
+
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                      SOURCE: {item.source || 'UNKNOWN'} · FEED: {item.source_id || 'UNKNOWN'} · PUBLISHED: {item.published_at ? new Date(item.published_at).toLocaleString() : 'TIME UNAVAILABLE'}
+                    </div>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontFamily: 'var(--font-mono)', paddingTop: '4px' }}>
                       <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)' }}>

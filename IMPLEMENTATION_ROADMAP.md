@@ -13,6 +13,6 @@ Track implementation work here. Check an item only after its code and documentat
 - [x] Persist periodic equity and holdings snapshots, show realized/unrealized P&L, and calculate sampled drawdown with visible quote-source and sample-size context.
 - [x] Record live Finnhub SPY marks alongside portfolio snapshots and report relative returns only across the same aligned window with at least two eligible observations.
 - [x] Compare distinct full-precision and INT8 artifacts on a pinned labeled holdout; report accuracy, weighted/macro F1, calibration, and Brier score, and gate traffic experiments on artifact hashes, quality thresholds, and explicit opt-in.
-- [ ] Improve news data quality: persist source identity and publication timestamps, deduplicate syndicated headlines, and show freshness/coverage by ticker and feed.
+- [x] Improve news data quality: persist feed identity and publisher timestamps, normalize exact syndicated copies for 24-hour deduplication, and show publication-time coverage/freshness by ticker and feed.
 - [ ] Complete hosted deployment: choose a host and domain, provision secrets and model artifacts, deploy the Compose stack, and verify the public health and websocket routes.
 - [ ] Review and secure the ML build toolchain: migrate from the current Transformers 4-only ONNX exporter, then audit the training/export dependencies separately from production runtime.

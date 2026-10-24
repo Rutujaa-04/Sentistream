@@ -94,24 +94,33 @@ class ClickHouseDatabase:
         confidence_score: float,
         ingested_at: float,
         processed_at: float,
-        model_version: str = "v1"
+        model_version: str = "v1",
+        source_id: str = "unknown",
+        published_at: Optional[float] = None,
     ):
         """Inserts a sentiment-analyzed financial news headline."""
         query = """
             INSERT INTO headlines (
-                id, ticker, headline_text, source, sentiment_label, 
-                confidence_score, ingested_at, processed_at, model_version
+                id, ticker, headline_text, source, source_id, published_at,
+                sentiment_label, confidence_score, ingested_at, processed_at, model_version
             ) VALUES
         """
         # Convert floats to clickhouse-compatible timestamps
         ingested_dt = datetime.fromtimestamp(ingested_at, tz=timezone.utc).replace(tzinfo=None)
         processed_dt = datetime.fromtimestamp(processed_at, tz=timezone.utc).replace(tzinfo=None)
+        published_dt = (
+            datetime.fromtimestamp(published_at, tz=timezone.utc).replace(tzinfo=None)
+            if published_at is not None
+            else None
+        )
         
         row = (
             headline_id,
             ticker,
             headline_text,
             source,
+            source_id,
+            published_dt,
             sentiment_label,
             confidence_score,
             ingested_dt,
@@ -286,7 +295,8 @@ class ClickHouseDatabase:
  
         query = f"""
             SELECT 
-                h.id, h.ticker, h.headline_text, h.source, h.sentiment_label, 
+                h.id, h.ticker, h.headline_text, h.source, h.source_id,
+                h.published_at, h.ingested_at, h.sentiment_label,
                 h.confidence_score, h.processed_at,
                 COALESCE(t.inference_latency_ms, 0.0) AS latency_ms,
                 h.model_version
@@ -299,12 +309,15 @@ class ClickHouseDatabase:
         rows = await self.execute(query)
         
         results = []
-        for hid, tk, text, source, sentiment, confidence, processed_at, latency, model_version in rows:
+        for hid, tk, text, source, source_id, published_at, ingested_at, sentiment, confidence, processed_at, latency, model_version in rows:
             results.append({
                 "id": str(hid),
                 "ticker": tk,
                 "headline": text,
                 "source": source,
+                "source_id": source_id or "unknown",
+                "published_at": published_at.isoformat() + "Z" if hasattr(published_at, "isoformat") else None,
+                "ingested_at": ingested_at.isoformat() + "Z" if hasattr(ingested_at, "isoformat") else str(ingested_at),
                 "sentiment": sentiment,
                 "confidence": float(confidence),
                 "latency_ms": round(float(latency), 2),
@@ -312,6 +325,57 @@ class ClickHouseDatabase:
                 "model_version": model_version if model_version else "v1"
             })
         return results
+
+    async def query_news_quality(self, hours: int = 24) -> Dict[str, Any]:
+        """Summarizes publication-time coverage and freshness by ticker and feed."""
+        safe_hours = max(1, min(int(hours), 168))
+        query = f"""
+            SELECT ticker, if(source_id = '', 'unknown', source_id) AS feed_id,
+                   count() AS headline_count,
+                   countIf(isNotNull(published_at)) AS published_count,
+                   max(published_at) AS latest_published_at,
+                   max(ingested_at) AS latest_ingested_at
+            FROM headlines
+            WHERE ingested_at >= now() - INTERVAL {safe_hours} HOUR
+            GROUP BY ticker, feed_id
+            ORDER BY ticker, feed_id
+        """
+        rows = await self.execute(query)
+        now = datetime.now(timezone.utc)
+        data = []
+        total_count = 0
+        total_published = 0
+        for ticker, feed_id, count, published_count, latest_published, latest_ingested in rows:
+            count = int(count)
+            published_count = int(published_count)
+            total_count += count
+            total_published += published_count
+            latest_published_utc = (
+                latest_published.replace(tzinfo=timezone.utc)
+                if hasattr(latest_published, "tzinfo") and latest_published.tzinfo is None
+                else latest_published
+            )
+            latest_ingested_utc = (
+                latest_ingested.replace(tzinfo=timezone.utc)
+                if hasattr(latest_ingested, "tzinfo") and latest_ingested.tzinfo is None
+                else latest_ingested
+            )
+            data.append({
+                "ticker": ticker,
+                "feed_id": feed_id,
+                "headline_count": count,
+                "publication_timestamp_coverage_pct": round(published_count / count * 100, 1) if count else 0.0,
+                "latest_published_at": latest_published_utc.isoformat().replace("+00:00", "Z") if latest_published_utc else None,
+                "publication_age_seconds": max(0, int((now - latest_published_utc).total_seconds())) if latest_published_utc else None,
+                "latest_ingested_at": latest_ingested_utc.isoformat().replace("+00:00", "Z") if latest_ingested_utc else None,
+                "ingestion_age_seconds": max(0, int((now - latest_ingested_utc).total_seconds())) if latest_ingested_utc else None,
+            })
+        return {
+            "window_hours": safe_hours,
+            "headline_count": total_count,
+            "publication_timestamp_coverage_pct": round(total_published / total_count * 100, 1) if total_count else 0.0,
+            "data": data,
+        }
 
     async def query_drift_alerts(self, ticker: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieves sparse statistical drift alerts from storage."""

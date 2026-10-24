@@ -9,7 +9,7 @@ The system processes financial news feeds through an event queue, routes them de
 ## 💎 Core Features
 
 ### 1. Event-Driven Real-time Pipeline
-* **Async News Ingestor (`ingestor.py`)**: Polls Finnhub's financial news API and falls back to MarketWatch and Yahoo Finance RSS feeds on API failures. Uses a deterministic UUID derived from headline text and ticker for deduplication.
+* **Async News Ingestor (`ingestor.py`)**: Polls Finnhub's financial news API and falls back to MarketWatch and Yahoo Finance RSS feeds on API failures. Tracks publisher/feed identity and publication time separately from ingestion time, and deduplicates exact syndicated copies across feeds using normalized headline text and ticker for a configurable 24-hour default window.
 * **Broker Queue (Redis Streams)**: Buffers raw ingest payloads in the `raw_headlines` stream to decouple ingestion from inference.
 * **Consumer Worker (`worker.py`)**: Consumes the stream, routes text to versioned INT8-quantized FinBERT ONNX models, updates Z-score drift stats, evaluates trading signals, executes simulated/Alpaca trades, and persists results.
 

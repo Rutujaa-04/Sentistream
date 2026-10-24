@@ -356,6 +356,15 @@ async def get_recent_headlines(
         logger.error("Failed to query recent headlines", error=str(e))
         raise HTTPException(status_code=500, detail="ClickHouse query failed.")
 
+@app.get("/api/v1/news-quality")
+async def get_news_quality(hours: int = Query(default=24, ge=1, le=168)):
+    """Returns publication timestamp coverage and feed freshness by ticker."""
+    try:
+        return await db.query_news_quality(hours=hours)
+    except Exception as e:
+        logger.error("Failed to query news quality summary", error=str(e))
+        raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+
 @app.get("/api/v1/ab-stats")
 async def get_ab_stats():
     """Queries ClickHouse for aggregate latency and counts grouped by model version."""
