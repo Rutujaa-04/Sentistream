@@ -141,4 +141,13 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Rationale**: A periodic ledger-derived mark-to-market series exposes the value of open positions across time, while the stored holdings and P&L split preserve an audit trail of each observation. A bounded history keeps dashboard payload and query size predictable.
 - **Data quality**: Finnhub marks are labeled `live`; fallback quote marks are labeled `simulated_fallback`; mixed or unavailable source metadata is explicit. The dashboard shows observation count and sample scope. The sample maximum drawdown is not presented as a full tick-level risk estimate.
 - **Reset behavior**: Portfolio reset truncates both trade history and snapshot history to avoid mixing portfolios in the same series.
-- **Limit**: Benchmark-relative performance remains unmeasured until a persistent benchmark price series with aligned timestamps is implemented. Snapshot history is sampled at the worker's configured cadence, so moves between observations can be missed.
+- **Limit**: Snapshot history is sampled at the worker's configured cadence, so moves between observations can be missed.
+
+---
+
+## 12. Aligned SPY Benchmark Marks (2026-10-24)
+- **Context**: A portfolio return is difficult to interpret without a comparable market return over the same window. The project already has a Finnhub quote client and a persisted periodic portfolio snapshot series.
+- **Decision**: At each snapshot, request a fresh SPY quote without applying the demo jitter used by simulated trading marks, then persist the quote, ticker, and source with the portfolio observation. The analytics API computes portfolio return and SPY buy-and-hold return from the first to last aligned observation. It reports excess return in percentage points only when there are at least two Finnhub SPY observations and the portfolio mark is live or cash-only.
+- **Rationale**: Storing the benchmark quote on the same row guarantees matching timestamps and avoids joining unrelated sampling schedules. Excluding fallback portfolio or benchmark prices prevents simulated values from being presented as measured market-relative performance.
+- **Migration**: New benchmark columns are created with the snapshot table and added idempotently to existing installations. Older rows default to `unknown` and are excluded from comparisons.
+- **Limit**: The benchmark is SPY and relies on Finnhub availability; without live marks the dashboard reports that there are not yet enough eligible observations. Returns cover the latest API sample (up to 1,000 marks), not the full retained year.

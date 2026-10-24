@@ -71,11 +71,18 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     unrealized_pnl_usd Float64,
     total_pnl_usd Float64,
     pricing_quality String,
+    benchmark_ticker String DEFAULT 'SPY',
+    benchmark_price Float64 DEFAULT 0,
+    benchmark_source String DEFAULT 'unknown',
     positions_json String
 ) ENGINE = MergeTree()
 ORDER BY snapshot_at
 TTL snapshot_at + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192;
+
+ALTER TABLE portfolio_snapshots ADD COLUMN IF NOT EXISTS benchmark_ticker String DEFAULT 'SPY';
+ALTER TABLE portfolio_snapshots ADD COLUMN IF NOT EXISTS benchmark_price Float64 DEFAULT 0;
+ALTER TABLE portfolio_snapshots ADD COLUMN IF NOT EXISTS benchmark_source String DEFAULT 'unknown';
 
 -- Migration: Add model_version column to headlines & telemetry
 ALTER TABLE headlines ADD COLUMN IF NOT EXISTS model_version String DEFAULT 'v1';

@@ -744,11 +744,18 @@ class ConsumerWorker:
         while self.is_running:
             try:
                 state = await self.portfolio_service.reconstruct_portfolio()
+                benchmark_price = await self.price_feed.get_price(
+                    "SPY", bypass_cache=True, allow_simulation=False
+                )
+                state["benchmark_ticker"] = "SPY"
+                state["benchmark_price"] = benchmark_price
+                state["benchmark_source"] = self.price_feed.get_price_source("SPY")
                 await self.db.insert_portfolio_snapshot(state)
                 logger.info(
                     "Persisted portfolio valuation snapshot",
                     value=state["portfolio_value_usd"],
                     pricing_quality=state["pricing_quality"],
+                    benchmark_source=state["benchmark_source"],
                     positions=len(state["positions"]),
                 )
             except Exception as e:

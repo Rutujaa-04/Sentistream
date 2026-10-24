@@ -46,7 +46,12 @@ class PriceFeed:
             await self.session.close()
             self.session = None
 
-    async def get_price(self, ticker: str, bypass_cache: bool = False) -> float:
+    async def get_price(
+        self,
+        ticker: str,
+        bypass_cache: bool = False,
+        allow_simulation: bool = True,
+    ) -> float:
         """
         Retrieves the price for a stock ticker, using an in-memory 30-second cache,
         polling Finnhub quote API as primary and falling back to mock prices on error.
@@ -74,7 +79,7 @@ class PriceFeed:
                         # Validate response has a positive current price
                         if current_price is not None and isinstance(current_price, (int, float)) and current_price > 0.0:
                             price_val = float(current_price)
-                            if bypass_cache:
+                            if bypass_cache and allow_simulation:
                                 # Add +/- 1% fluctuation to simulate market movement for demo runs
                                 price_val = round(price_val * (1.0 + random.uniform(-0.01, 0.01)), 2)
                             self.cache[ticker] = (price_val, now)
