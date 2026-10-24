@@ -49,6 +49,7 @@ This file documents the key design decisions, trade-offs, and rationale behind S
   - Memory consumption of 210MB is well within acceptable limits for the local Docker compose and standard host machines.
   - Initializing both models at worker startup avoids runtime "first-request" latency degradation for either version.
   - While it slightly increases the initial cold-start duration of the worker container, it guarantees stable, deterministic p99 latency benchmarks (< 50ms) for both user-facing endpoints immediately from the first live headline processed.
+- **Status**: Superseded by Decision 13. The INT8 challenger is now loaded only when its artifact passes evaluation and the operator opts into an experiment; the full-precision baseline remains the default.
 
 ---
 
@@ -151,3 +152,14 @@ This file documents the key design decisions, trade-offs, and rationale behind S
 - **Rationale**: Storing the benchmark quote on the same row guarantees matching timestamps and avoids joining unrelated sampling schedules. Excluding fallback portfolio or benchmark prices prevents simulated values from being presented as measured market-relative performance.
 - **Migration**: New benchmark columns are created with the snapshot table and added idempotently to existing installations. Older rows default to `unknown` and are excluded from comparisons.
 - **Limit**: The benchmark is SPY and relies on Finnhub availability; without live marks the dashboard reports that there are not yet enough eligible observations. Returns cover the latest API sample (up to 1,000 marks), not the full retained year.
+
+---
+
+## 13. Hash-Bound Model Artifact Evaluation and Traffic Gate (2026-10-24)
+- **Context**: The prior startup copied one INT8 model into both routing slots and enabled an 80/20 split regardless of model identity or quality. The dashboard showed routing telemetry but had no labeled quality comparison.
+- **Decision**: Compare the exported full-precision ONNX baseline (`v1`) with the independently generated INT8 artifact (`v2`) on a pinned, stratified 10% holdout from Financial PhraseBank `sentences_allagree`. Report accuracy, weighted/macro F1, expected calibration error, multiclass Brier score, per-class support, dataset/archive fingerprints, and model SHA-256 hashes. Require at least 100 examples, weighted-F1 drop no greater than 0.01, macro-F1 drop no greater than 0.02, and ECE increase no greater than 0.03 for eligibility.
+- **Traffic control**: Route all headlines to `v1` by default. Enable the deterministic 80/20 split only if the evaluation report passes, both installed artifact hashes match the report and are distinct, and `MODEL_EXPERIMENT_ENABLED=true`. Load the challenger session only after that gate passes.
+- **Rationale**: Quantization is a real accuracy/calibration versus latency/size trade-off. Separating this artifact comparison from traffic assignment prevents an unmeasured candidate from affecting results; hash binding invalidates stale reports after any artifact replacement.
+- **Dataset handling**: Fetch the dataset archive at a pinned Hugging Face revision into the local cache; do not commit or package the dataset itself. Financial PhraseBank is CC BY-NC-SA 3.0, so this evaluation data is for non-commercial use unless separate rights are obtained.
+- **First measured result**: On the pinned 227-example test split, FP32 scored 0.9648 accuracy, 0.9655 weighted F1, 0.9491 macro F1, and 0.0463 ECE. INT8 scored 0.9736 accuracy, 0.9740 weighted F1, 0.9608 macro F1, and 0.1124 ECE. The candidate is rejected because its ECE increase (0.0660) exceeds the 0.03 limit; all traffic remains on FP32. The generated report is local because model binaries and reports are excluded from Git.
+- **Limit**: The baseline and challenger share the same trained checkpoint; this comparison measures full-precision versus INT8 quantization, not two separately fine-tuned architectures. A future learned challenger needs its own versioned training artifact and a separately licensed or internally labeled holdout.

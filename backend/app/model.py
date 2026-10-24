@@ -1,6 +1,9 @@
+import hashlib
+import json
 import os
 import sys
 import time
+from functools import lru_cache
 
 import numpy as np
 import onnxruntime as ort
@@ -9,8 +12,83 @@ from tokenizers import Tokenizer
 
 # Add parent directory to path to import properly
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.config import settings
 
 logger = structlog.get_logger()
+
+
+def _workspace_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _artifact_path(configured_path: str) -> str:
+    if os.path.isabs(configured_path):
+        return configured_path
+    return os.path.join(_workspace_dir(), configured_path)
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as artifact:
+        for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def get_model_evaluation_status() -> dict:
+    """Validates the stored holdout report against the installed ONNX artifacts."""
+    v1_path = _artifact_path(settings.MODEL_V1_PATH)
+    v2_path = _artifact_path(settings.MODEL_V2_PATH)
+    report_path = os.path.join(_workspace_dir(), "models", "model-evaluation.json")
+    hashes = {
+        "v1": _sha256(v1_path) if os.path.isfile(v1_path) else None,
+        "v2": _sha256(v2_path) if os.path.isfile(v2_path) else None,
+    }
+    report = None
+    try:
+        with open(report_path, "r", encoding="utf-8") as report_file:
+            report = json.load(report_file)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    valid_report = bool(
+        report
+        and hashes["v1"]
+        and hashes["v2"]
+        and hashes["v1"] != hashes["v2"]
+        and report.get("artifact_hashes") == hashes
+        and report.get("experiment_eligible") is True
+        and int(report.get("sample_count", 0)) >= settings.MODEL_EVAL_MIN_SAMPLES
+    )
+    experiment_enabled = bool(valid_report and settings.MODEL_EXPERIMENT_ENABLED)
+    if valid_report:
+        status = "ready"
+        reason = (
+            "Evaluation passed; set MODEL_EXPERIMENT_ENABLED=true to route the configured traffic split."
+            if not settings.MODEL_EXPERIMENT_ENABLED
+            else "Evaluation passed and the model experiment is enabled."
+        )
+    elif report and report.get("artifact_hashes") != hashes:
+        status = "stale_evaluation"
+        reason = "The evaluation report does not match the installed model artifacts. Re-run compare_models.py."
+    elif report and report.get("status") == "rejected":
+        status = "rejected"
+        reason = "The challenger did not meet the holdout quality thresholds."
+    else:
+        status = "not_evaluated"
+        reason = "Distinct model artifacts and a passing holdout evaluation are required before an experiment."
+
+    return {
+        "status": status,
+        "experiment_enabled": experiment_enabled,
+        "reason": reason,
+        "minimum_samples": settings.MODEL_EVAL_MIN_SAMPLES,
+        "sample_count": int(report.get("sample_count", 0)) if report else 0,
+        "dataset": report.get("dataset") if report else None,
+        "models": report.get("models", {}) if report else {},
+        "artifact_hashes": hashes,
+    }
 
 def softmax(x):
     """Computes softmax values for each sets of scores in x."""
@@ -33,37 +111,19 @@ class SentimentModel:
             
         logger.info("Initializing Sentiment ONNX Model...")
         
-        # Determine path to the dynamic INT8 quantized models
-        workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        models_dir = os.path.join(workspace_dir, "models")
-        
-        self.model_v1_path = os.path.join(models_dir, "finbert-int8-v1.onnx")
-        self.model_v2_path = os.path.join(models_dir, "finbert-int8-v2.onnx")
-        
-        # Populate model registry automatically if versions are missing
-        base_model_path = os.path.join(models_dir, "finbert-int8.onnx")
-        if not os.path.exists(self.model_v1_path) or not os.path.exists(self.model_v2_path):
-            if os.path.exists(base_model_path):
-                import shutil
-                if not os.path.exists(self.model_v1_path):
-                    logger.info("Copying base model to finbert-int8-v1.onnx for registry setup...")
-                    shutil.copy2(base_model_path, self.model_v1_path)
-                if not os.path.exists(self.model_v2_path):
-                    logger.info("Copying base model to finbert-int8-v2.onnx for registry setup...")
-                    shutil.copy2(base_model_path, self.model_v2_path)
-            else:
-                logger.error("Base quantized ONNX model asset not found", path=base_model_path)
-                raise FileNotFoundError(
-                    f"ONNX Model not found at {base_model_path}. "
-                    "Please run python backend/ml/train.py and python backend/ml/export_onnx.py first, "
-                    "or place a pre-compiled 'finbert-int8.onnx' in the models/ directory."
-                )
+        self.model_v1_path = _artifact_path(settings.MODEL_V1_PATH)
+        self.model_v2_path = _artifact_path(settings.MODEL_V2_PATH)
+        if not os.path.isfile(self.model_v1_path):
+            raise FileNotFoundError(f"Baseline ONNX model not found at {self.model_v1_path}.")
+        self.evaluation_status = get_model_evaluation_status()
+        self.experiment_enabled = self.evaluation_status["experiment_enabled"]
 
         # Use the local tokenizer artifact produced by training/export. The
         # serving image intentionally does not install the training stack.
+        workspace_dir = _workspace_dir()
         tokenizer_candidates = [
-            os.path.join(workspace_dir, "models", "checkpoint-best", "tokenizer.json"),
             os.path.join(workspace_dir, "models", "finbert-onnx", "tokenizer.json"),
+            os.path.join(workspace_dir, "models", "checkpoint-best", "tokenizer.json"),
         ]
         tokenizer_file = next(
             (candidate for candidate in tokenizer_candidates if os.path.isfile(candidate)),
@@ -92,13 +152,18 @@ class SentimentModel:
             
             # Load ONNX Inference Sessions on CPU execution provider
             self.sessions = {
-                "v1": ort.InferenceSession(self.model_v1_path, opts, providers=["CPUExecutionProvider"]),
-                "v2": ort.InferenceSession(self.model_v2_path, opts, providers=["CPUExecutionProvider"])
+                "v1": ort.InferenceSession(self.model_v1_path, opts, providers=["CPUExecutionProvider"])
             }
+            if self.experiment_enabled:
+                self.sessions["v2"] = ort.InferenceSession(
+                    self.model_v2_path, opts, providers=["CPUExecutionProvider"]
+                )
             logger.info(
                 "ONNX Inference Sessions initialized successfully",
                 model_v1=self.model_v1_path,
-                model_v2=self.model_v2_path
+                model_v2=self.model_v2_path if "v2" in self.sessions else None,
+                experiment_enabled=self.experiment_enabled,
+                evaluation_status=self.evaluation_status["status"],
             )
         except Exception as e:
             logger.error("Failed to initialize ONNX Inference Sessions", error=str(e))

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import dashboard_controls_enabled, settings, test_endpoints_enabled
 from app.database import ClickHouseDatabase
-from app.model import SentimentModel
+from app.model import SentimentModel, get_model_evaluation_status
 from app.trading.portfolio_service import PortfolioService
 from app.trading.price_feed import PriceFeed
 
@@ -368,6 +368,11 @@ async def get_ab_stats():
     except Exception as e:
         logger.error("Failed to query A/B stats", error=str(e))
         raise HTTPException(status_code=500, detail="ClickHouse query failed.")
+
+@app.get("/api/v1/model-evaluation")
+async def get_model_evaluation():
+    """Returns holdout metrics only when they match mounted model artifacts."""
+    return get_model_evaluation_status()
 
 @app.get("/api/v1/latency-percentiles")
 async def get_latency_percentiles(window: str = Query(default="1h", pattern="^(1h|6h|24h)$")):

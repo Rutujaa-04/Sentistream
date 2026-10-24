@@ -350,6 +350,7 @@ export default function App() {
   const [sentimentTrends, setSentimentTrends] = useState([]);
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
+  const [modelEvaluation, setModelEvaluation] = useState({ status: 'not_evaluated', models: {} });
   const [portfolioHistory, setPortfolioHistory] = useState([]);
   const [portfolioAnalytics, setPortfolioAnalytics] = useState({
     observations: 0,
@@ -471,6 +472,11 @@ export default function App() {
       if (abRes.ok) {
         const abData = await abRes.json();
         setAbStats(abData.data || []);
+      }
+
+      const modelEvalRes = await fetch(`${API_BASE_URL}/api/v1/model-evaluation`);
+      if (modelEvalRes.ok) {
+        setModelEvaluation(await modelEvalRes.json());
       }
 
       // Persisted mark-to-market snapshots and sampled drawdown
@@ -1318,7 +1324,9 @@ export default function App() {
             <LatencyChart data={latencyHistory} />
             
             <div style={{ fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              Routing-slot counts and latency only; model quality comparison is not available.
+              {modelEvaluation.status === 'ready' || modelEvaluation.status === 'rejected'
+                ? `HOLDOUT: ${modelEvaluation.dataset?.repo || 'Financial PhraseBank'} · ${modelEvaluation.sample_count} samples · ${modelEvaluation.status.toUpperCase()} · ${modelEvaluation.experiment_enabled ? 'EXPERIMENT ENABLED' : 'ROUTING V1 ONLY'}`
+                : `MODEL QUALITY: ${modelEvaluation.status.replaceAll('_', ' ').toUpperCase()} · ROUTING V1 ONLY`}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '8px' }}>
               {['v1', 'v2'].map(version => {
@@ -1330,6 +1338,8 @@ export default function App() {
                   p95_ms: 0,
                   p99_ms: 0
                 };
+                const hasCurrentEvaluation = ['ready', 'rejected'].includes(modelEvaluation.status);
+                const evalMetrics = hasCurrentEvaluation ? modelEvaluation.models?.[version] : null;
                 const isV2 = version === 'v2';
                 const accentColor = isV2 ? 'var(--color-drift)' : 'var(--color-neutral)';
                 const borderCol = isV2 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)';
@@ -1342,7 +1352,7 @@ export default function App() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>EVALS:</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>ROUTED EVENTS:</span>
                         <span style={{ color: '#FFF', fontWeight: 'bold' }}>{stats.total_count}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1352,6 +1362,18 @@ export default function App() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>p99:</span>
                         <span style={{ color: 'var(--color-bearish)' }}>{stats.p99_ms}ms</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>HOLDOUT ACCURACY:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? `${(evalMetrics.accuracy * 100).toFixed(1)}%` : '—'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>MACRO F1:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? evalMetrics.macro_f1.toFixed(3) : '—'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>ECE:</span>
+                        <span style={{ color: '#FFF' }}>{evalMetrics ? evalMetrics.expected_calibration_error.toFixed(3) : '—'}</span>
                       </div>
                     </div>
                   </div>

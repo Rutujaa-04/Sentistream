@@ -14,10 +14,9 @@ The system processes financial news feeds through an event queue, routes them de
 * **Consumer Worker (`worker.py`)**: Consumes the stream, routes text to versioned INT8-quantized FinBERT ONNX models, updates Z-score drift stats, evaluates trading signals, executes simulated/Alpaca trades, and persists results.
 
 ### 2. ONNX Routing Telemetry
-* Routes headlines across version slots (`v1` and `v2`) using CPU ONNX Runtime.
-* Implements a deterministic **80/20 split** based on the headline UUID:
-  `Model Version = v1 if int(headline_id[:8], 16) % 10 < 8 else v2`
-  This keeps slot assignment stable across worker restarts and DLQ replays. If versioned artifacts are absent, both slots are copied from the same base model; the current dashboard reports routing counts and latency, not model-quality A/B results.
+* Compares the full-precision ONNX artifact (`v1`) with the independently exported INT8 artifact (`v2`) using accuracy, weighted/macro F1, expected calibration error, and multiclass Brier score on one deterministic labeled holdout.
+* Runtime verifies the evaluation report's SHA-256 hashes against both mounted artifacts. Headlines remain on `v1` unless the artifacts are distinct, the challenger passes sample/quality gates, and `MODEL_EXPERIMENT_ENABLED=true` is explicitly set. When enabled, the deterministic 80/20 UUID split remains stable across worker restarts and DLQ replays.
+* The dashboard labels live routing counts/latency separately from holdout quality metrics. Missing or stale evaluation reports keep challenger metrics unavailable and routing on `v1`.
 
 ### 3. Quantitative Trading Strategies
 * **Strategy Modes**: Supports **Long-Only** and **Long-Short (Short Selling)** modes. Dashboard write controls are disabled by default and remain disabled in production until authenticated controls exist.
@@ -44,7 +43,7 @@ The system processes financial news feeds through an event queue, routes them de
 
 ### 6. Premium Glassmorphic Web UI
 * Displays live ticker news streams with distinct, version-specific badges (`V1` / `V2`) indicating which model performed inference.
-* Shows routing-slot counts and latency percentiles. It does not claim a model-quality comparison until distinct artifacts and labeled evaluations are available.
+* Shows routing counts/latency separately from hash-matched holdout accuracy, macro-F1, and calibration metrics; stale or missing evaluation data is labeled and keeps the worker on `v1`.
 * Formats negative position shares as `SHORT` (e.g., `10 SHORT`) with distinct amber accents (`var(--color-drift)`) to represent short liabilities.
 * Displays a header panel containing Net Portfolio Value, Cash Balance, Realized P&L, Unrealized P&L, and Win-Rate metrics using beautiful, custom telemetry cards and inline SVGs.
 
@@ -58,7 +57,7 @@ graph TD
     Redis -->|Group Consume| Worker[Consumer Worker]
     
     subgraph "Worker Process (Stream Processing)"
-        ModelRegistry[Model Registry: Champion v1 & Challenger v2]
+        ModelRegistry[Model Registry: FP32 baseline v1 & INT8 challenger v2]
         DriftDetector[Z-Score Drift Detector]
         Strategy[Threshold-Based Trading Strategy]
         ExecutionEngine[Execution Engine: Alpaca / Simulated]
@@ -92,15 +91,20 @@ cp .env.example .env
 ```
 Set `FINNHUB_API_KEY` if you want Finnhub ingestion and quotes. Keep `ENABLE_TEST_ENDPOINTS` and `ENABLE_DASHBOARD_CONTROLS` false for a public deployment. The default ClickHouse password is for local development; replace it before hosting.
 
-### 2. Prepare model assets
-Model binaries are deliberately excluded from Git. From the project root, install the ML dependencies and export the ONNX model:
+### 2. Prepare and evaluate model assets
+Model binaries and generated evaluation reports are deliberately excluded from Git. From the project root, install the ML dependencies, export both the full-precision baseline and INT8 challenger, then evaluate them:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
 python backend/ml/export_onnx.py
+python backend/ml/compare_models.py
 ```
-The runtime expects `models/finbert-int8.onnx` and the tokenizer files under `models/finbert-onnx/`. Startup makes `v1` and `v2` routing-slot copies from the base model when versioned files are absent; the slots are not a model-quality A/B experiment.
+This evaluation downloads the pinned `sentences_allagree` Financial PhraseBank source into the Hugging Face cache and writes a hash-bound `models/model-evaluation.json`. The dataset is licensed CC BY-NC-SA 3.0, so this evaluation workflow is for non-commercial use unless separate rights are obtained. The runtime expects `models/finbert-fp32.onnx`, `models/finbert-int8.onnx`, `models/finbert-onnx/tokenizer.json`, and the generated evaluation report. Missing, stale, identical, or rejected artifacts keep traffic routed to `v1`.
+
+The current local evaluation rejects the INT8 challenger on calibration: its ECE is 0.1124 versus 0.0463 for FP32, despite higher accuracy and F1. The challenger therefore remains unavailable for traffic experiments until calibration is improved and a new report passes.
+
+To explicitly allow the experiment after the evaluation passes its gates, set `MODEL_EXPERIMENT_ENABLED=true` in `.env` and restart the worker. The default remains `false`. Use `python backend/ml/compare_models.py --strict` to make a rejected challenger return a non-zero exit code.
 
 ### 3. Start the complete stack
 ```bash
@@ -157,7 +161,7 @@ For a detailed design log, refer to [DECISIONS.md](DECISIONS.md):
 2. **Lightweight HTTP Server for Worker Telemetry**: Starts a Prometheus exporter on port `8001` in the worker process thread, removing Pushgateway dependencies.
 3. **Bypassing `/metrics` tracking**: Excludes scraping routes from Gateway request middleware to avoid skewing real-user traffic metrics.
 4. **Z-Score Resetting Rules**: Quiet tickers (no headlines for 60s) reset their sentiment rolling standard-deviation metrics to `0.0` to avoid stale indicators.
-5. **Dual ONNX Startup Sessions**: Pre-loads both v1 and v2 models in memory (~210MB footprint) to achieve stable, sub-50ms p99 latency benchmarks from the first request.
+5. **On-Demand Challenger Session**: Keeps the FP32 baseline loaded by default and loads the INT8 challenger only after a matching evaluation passes and experiment opt-in is enabled.
 6. **Position Sizing and Scaling**: Allows consecutive buys/sells up to cash limits once the cooldown expires, rather than enforcing a flat-to-active rule.
 7. **Short-Covering Liquidation Symmetry**: Covers short positions (or liquidates long positions) completely when opposing sentiment triggers occur to mitigate risk.
 

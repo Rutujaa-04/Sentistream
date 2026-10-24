@@ -37,6 +37,10 @@ class Settings(BaseModel):
     STREAM_RECLAIM_IDLE_MS: int = Field(default=60000, ge=1000)
     STREAM_RECLAIM_INTERVAL_SECONDS: int = Field(default=5, ge=1)
     PORTFOLIO_SNAPSHOT_INTERVAL_SECONDS: int = Field(default=60, ge=10)
+    MODEL_V1_PATH: str = Field(default="models/finbert-fp32.onnx")
+    MODEL_V2_PATH: str = Field(default="models/finbert-int8.onnx")
+    MODEL_EXPERIMENT_ENABLED: bool = Field(default=False)
+    MODEL_EVAL_MIN_SAMPLES: int = Field(default=100, ge=1)
     LOG_LEVEL: str = Field(default="INFO")
 
     # Paper Trading Strategy Selection

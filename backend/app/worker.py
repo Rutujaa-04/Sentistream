@@ -345,10 +345,12 @@ class ConsumerWorker:
             source = fields["source"]
             ingested_at = float(fields["ingested_at"])
             
-            # Deterministic 80/20 A/B split based on headline ID hash
+            # Route traffic only after distinct artifacts pass holdout gates
+            # and an operator explicitly enables the experiment.
             try:
-                clean_hex = headline_id[:8].replace("-", "")
-                model_version = "v1" if int(clean_hex, 16) % 10 < 8 else "v2"
+                if self.model.experiment_enabled:
+                    clean_hex = headline_id[:8].replace("-", "")
+                    model_version = "v1" if int(clean_hex, 16) % 10 < 8 else "v2"
             except Exception:
                 model_version = "v1"
             

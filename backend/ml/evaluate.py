@@ -3,7 +3,7 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-from datasets import load_dataset
+from phrasebank_data import load_phrasebank_splits
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -13,31 +13,12 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trai
 
 
 def main():
-    print("Step 1: Loading Financial PhraseBank dataset for evaluation...")
-    dataset = load_dataset("financial_phrasebank", "sentences_allagree")
-    raw_data = dataset["train"]
-    
-    # 1. Remap labels (same as training to ensure consistency)
-    # FPB labels: 0=negative, 1=neutral, 2=positive
-    # ProsusAI/finbert labels: 0=positive, 1=negative, 2=neutral
-    def remap_labels(example):
-        fpb_label = example["label"]
-        if fpb_label == 0:
-            new_label = 1
-        elif fpb_label == 1:
-            new_label = 2
-        else:
-            new_label = 0
-        return {"label": new_label}
-
-    remapped_data = raw_data.map(remap_labels)
-
-    # 2. Stratified splitting (same random seed to isolate exact same test split)
-    train_temp = remapped_data.train_test_split(test_size=0.2, seed=42, stratify_by_column="label")
-    val_test = train_temp["test"].train_test_split(test_size=0.5, seed=42, stratify_by_column="label")
-    test_dataset = val_test["test"]
+    print("Step 1: Loading the pinned labeled test split...")
+    splits, dataset_metadata = load_phrasebank_splits()
+    test_dataset = splits["test"]
     
     print(f"Test split samples to evaluate: {len(test_dataset)}")
+    print(f"Dataset archive SHA-256: {dataset_metadata['archive_sha256']}")
 
     # 3. Load fine-tuned model and tokenizer
     best_model_path = "models/checkpoint-best"

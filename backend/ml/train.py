@@ -1,11 +1,10 @@
 import os
-import sys
 from collections import Counter
 
 import numpy as np
 import torch
 import torch.nn as nn
-from datasets import load_dataset
+from phrasebank_data import load_phrasebank_splits
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
     AutoModelForSequenceClassification,
@@ -49,45 +48,16 @@ def compute_metrics(eval_pred):
     }
 
 def main():
-    print("Step 1: Loading Financial PhraseBank dataset...")
-    # sentences_allagree configuration requires 100% annotator consensus
-    try:
-        dataset = load_dataset("financial_phrasebank", "sentences_allagree")
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        sys.exit(1)
-        
-    raw_data = dataset["train"]
-    print(f"Loaded {len(raw_data)} samples.")
+    print("Step 1: Loading pinned Financial PhraseBank and deterministic splits...")
+    splits, dataset_metadata = load_phrasebank_splits()
+    train_dataset = splits["train"]
+    val_dataset = splits["validation"]
+    test_dataset = splits["test"]
+    print(f"Loaded {dataset_metadata['sample_count']} labeled samples.")
+    print(f"Dataset archive SHA-256: {dataset_metadata['archive_sha256']}")
 
-    print("\nStep 2: Remapping labels to match ProsusAI/finbert configurations...")
-    # Financial PhraseBank labels: 0=negative, 1=neutral, 2=positive
-    # ProsusAI/finbert labels: 0=positive, 1=negative, 2=neutral
-    # Remap mapping:
-    # fpb: 0 (neg) -> finbert: 1
-    # fpb: 1 (neu) -> finbert: 2
-    # fpb: 2 (pos) -> finbert: 0
-    def remap_labels(example):
-        fpb_label = example["label"]
-        if fpb_label == 0:    # negative
-            new_label = 1
-        elif fpb_label == 1:  # neutral
-            new_label = 2
-        else:                 # positive
-            new_label = 0
-        return {"label": new_label}
-
-    remapped_data = raw_data.map(remap_labels)
-
-    print("\nStep 3: Creating stratified splits (80% train, 10% validation, 10% test)...")
-    # First split into 80% train and 20% temp
-    train_temp = remapped_data.train_test_split(test_size=0.2, seed=42, stratify_by_column="label")
-    # Split the 20% temp into 50% validation and 50% test (10% and 10% of total)
-    val_test = train_temp["test"].train_test_split(test_size=0.5, seed=42, stratify_by_column="label")
-    
-    train_dataset = train_temp["train"]
-    val_dataset = val_test["train"]
-    test_dataset = val_test["test"]
+    print("\nStep 2: Using fixed FinBERT label order (positive=0, negative=1, neutral=2)...")
+    print("\nStep 3: Reusing the shared stratified 80/10/10 split...")
     
     print(f"Train samples: {len(train_dataset)}")
     print(f"Val samples:   {len(val_dataset)}")
