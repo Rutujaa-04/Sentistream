@@ -351,7 +351,11 @@ export default function App() {
   const [portfolio, setPortfolio] = useState(null);
   const [abStats, setAbStats] = useState([]);
   const [portfolioHistory, setPortfolioHistory] = useState([]);
-  const [portfolioAnalytics, setPortfolioAnalytics] = useState({ observations: 0, max_sampled_drawdown_pct: 0 });
+  const [portfolioAnalytics, setPortfolioAnalytics] = useState({
+    observations: 0,
+    max_sampled_drawdown_pct: 0,
+    benchmark_relative_performance: { status: 'insufficient_aligned_live_marks', matched_observations: 0 }
+  });
   const [strategyMode, setStrategyMode] = useState('long_only');
   const [dashboardControlsEnabled, setDashboardControlsEnabled] = useState(false);
   
@@ -412,6 +416,7 @@ export default function App() {
         : historicalPriceSources[0] === 'simulated_fallback'
           ? 'SIMULATED PRICE MARKS'
           : 'CASH ONLY / UNKNOWN PRICE SOURCE';
+  const benchmarkPerformance = portfolioAnalytics.benchmark_relative_performance || {};
 
   // 1. Fetch REST API datasets from ClickHouse and health check endpoint
   const fetchTelemetryData = async () => {
@@ -1278,7 +1283,12 @@ export default function App() {
             </h2>
             <PnLHistoryChart data={portfolioHistory} />
             <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
-              {portfolioAnalytics.observations} latest snapshots · {portfolioAnalytics.snapshot_interval_seconds || 60}s target interval · {historicalPriceLabel} · Benchmark comparison not measured.
+              {portfolioAnalytics.observations} latest snapshots · {portfolioAnalytics.snapshot_interval_seconds || 60}s target interval · {historicalPriceLabel}
+            </p>
+            <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+              {benchmarkPerformance.status === 'measured'
+                ? `SPY comparison · Portfolio ${benchmarkPerformance.portfolio_return_pct >= 0 ? '+' : ''}${benchmarkPerformance.portfolio_return_pct.toFixed(2)}% · SPY ${benchmarkPerformance.benchmark_return_pct >= 0 ? '+' : ''}${benchmarkPerformance.benchmark_return_pct.toFixed(2)}% · Excess ${benchmarkPerformance.excess_return_pct >= 0 ? '+' : ''}${benchmarkPerformance.excess_return_pct.toFixed(2)} pp · ${benchmarkPerformance.matched_observations} aligned live marks`
+                : `SPY comparison awaiting at least 2 aligned live marks · ${benchmarkPerformance.matched_observations || 0} currently eligible`}
             </p>
           </div>
 

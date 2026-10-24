@@ -336,12 +336,45 @@ class PortfolioService:
             max_drawdown_usd = max(max_drawdown_usd, drawdown_usd)
             max_drawdown_pct = max(max_drawdown_pct, drawdown_pct)
 
+        aligned_marks = [
+            snapshot for snapshot in snapshots
+            if snapshot.get("benchmark_ticker") == "SPY"
+            and snapshot.get("benchmark_source") == "finnhub"
+            and float(snapshot.get("benchmark_price", 0)) > 0
+            and snapshot.get("pricing_quality") in {"live", "cash_only"}
+        ]
+        benchmark = {
+            "status": "insufficient_aligned_live_marks",
+            "ticker": "SPY",
+            "matched_observations": len(aligned_marks),
+            "window_start": None,
+            "window_end": None,
+            "portfolio_return_pct": None,
+            "benchmark_return_pct": None,
+            "excess_return_pct": None,
+        }
+        if len(aligned_marks) >= 2:
+            first, last = aligned_marks[0], aligned_marks[-1]
+            first_value = float(first["portfolio_value"])
+            first_benchmark = float(first["benchmark_price"])
+            if first_value > 0 and first_benchmark > 0:
+                portfolio_return = (float(last["portfolio_value"]) / first_value - 1) * 100
+                benchmark_return = (float(last["benchmark_price"]) / first_benchmark - 1) * 100
+                benchmark.update({
+                    "status": "measured",
+                    "window_start": first["timestamp"],
+                    "window_end": last["timestamp"],
+                    "portfolio_return_pct": round(portfolio_return, 4),
+                    "benchmark_return_pct": round(benchmark_return, 4),
+                    "excess_return_pct": round(portfolio_return - benchmark_return, 4),
+                })
+
         return {
             "data": snapshots,
             "observations": len(snapshots),
             "max_sampled_drawdown_usd": round(max_drawdown_usd, 2),
             "max_sampled_drawdown_pct": round(max_drawdown_pct, 4),
             "sample_scope": "latest_snapshots",
-            "benchmark_relative_performance": "not_measured",
+            "benchmark_relative_performance": benchmark,
             "snapshot_interval_seconds": settings.PORTFOLIO_SNAPSHOT_INTERVAL_SECONDS,
         }

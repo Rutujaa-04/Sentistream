@@ -379,7 +379,8 @@ class ClickHouseDatabase:
         query = """
             INSERT INTO portfolio_snapshots (
                 snapshot_at, portfolio_value_usd, cash_usd, realized_pnl_usd,
-                unrealized_pnl_usd, total_pnl_usd, pricing_quality, positions_json
+                unrealized_pnl_usd, total_pnl_usd, pricing_quality,
+                benchmark_ticker, benchmark_price, benchmark_source, positions_json
             ) VALUES
         """
         snapshot_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -391,6 +392,9 @@ class ClickHouseDatabase:
             float(snapshot["unrealized_pnl_usd"]),
             float(snapshot["total_pnl_usd"]),
             str(snapshot["pricing_quality"]),
+            str(snapshot.get("benchmark_ticker", "SPY")),
+            float(snapshot.get("benchmark_price", 0)),
+            str(snapshot.get("benchmark_source", "unknown")),
             json.dumps(snapshot["positions"], separators=(",", ":")),
         )
         await self.execute(query, [row])
@@ -399,14 +403,15 @@ class ClickHouseDatabase:
         """Returns the most recent persisted equity marks in chronological order."""
         query = f"""
             SELECT snapshot_at, portfolio_value_usd, cash_usd, realized_pnl_usd,
-                   unrealized_pnl_usd, total_pnl_usd, pricing_quality, positions_json
+                   unrealized_pnl_usd, total_pnl_usd, pricing_quality,
+                   benchmark_ticker, benchmark_price, benchmark_source, positions_json
             FROM portfolio_snapshots
             ORDER BY snapshot_at DESC
             LIMIT {int(limit)}
         """
         rows = await self.execute(query)
         results = []
-        for snapshot_at, value, cash, realized, unrealized, total, quality, positions_json in reversed(rows):
+        for snapshot_at, value, cash, realized, unrealized, total, quality, benchmark_ticker, benchmark_price, benchmark_source, positions_json in reversed(rows):
             results.append({
                 "timestamp": snapshot_at.isoformat() + "Z" if hasattr(snapshot_at, "isoformat") else str(snapshot_at),
                 "portfolio_value": round(float(value), 2),
@@ -415,6 +420,9 @@ class ClickHouseDatabase:
                 "unrealized_pnl": round(float(unrealized), 2),
                 "total_pnl": round(float(total), 2),
                 "pricing_quality": quality,
+                "benchmark_ticker": benchmark_ticker,
+                "benchmark_price": round(float(benchmark_price), 4),
+                "benchmark_source": benchmark_source,
                 "positions": json.loads(positions_json),
             })
         return results

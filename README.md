@@ -35,7 +35,7 @@ The system processes financial news feeds through an event queue, routes them de
 * Reconstructs the portfolio cash, position ledger, realized/unrealized P&L, and win-rate metrics directly from ClickHouse trade history using `PortfolioService`.
 * Handles short sale proceeds (added to cash at execution time) and short covering costs (subtracted from cash) without double-counting position liabilities.
 * The dashboard stores periodic equity and holdings marks in ClickHouse and shows the quote source, observation count, and sampled maximum drawdown. Finnhub marks are labeled live; fallback marks are labeled simulated.
-* Benchmark-relative returns are not reported because the project does not yet persist a matching benchmark price series.
+* The worker records a Finnhub SPY quote with each portfolio snapshot. The analytics API compares portfolio and SPY returns over the same aligned observation window, and only includes live benchmark prices with live or cash-only portfolio marks. Fallback or unknown marks are excluded; the dashboard waits for at least two eligible observations before reporting relative performance.
 
 ### 5. MLOps Telemetry (Prometheus & Grafana)
 * Tracks tokenization/inference latency histograms, processed throughput count, rolling Z-score sentiment drift, portfolio cash/valuation, and stream backlogs.
